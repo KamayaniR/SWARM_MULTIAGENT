@@ -4,3 +4,4 @@ __pycache__/
 .env
 .scheduler_state.json
 runs/
+data/

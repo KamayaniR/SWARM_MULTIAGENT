@@ -60,24 +60,26 @@ def run_coder(
     iteration: int,
 ) -> dict[str, str]:
     """Call the Coder LLM and return {filepath: content} for this step."""
-    response = client.messages.create(
+    result, _metrics = client.call(
         model=model,
-        max_tokens=8192,
         system=SYSTEM_PROMPT,
-        tools=[FILES_TOOL],
-        tool_choice={"type": "tool", "name": "submit_files"},
         messages=[{"role": "user", "content": _build_user_message(step, workspace_files, feedback)}],
+        tool=FILES_TOOL,
+        run_id=run_id,
+        agent="coder",
+        step_id=step["id"],
+        step_class=step["step_class"],
+        iteration=iteration,
+        max_tokens=8192,
     )
-
-    tool_call = next(b for b in response.content if b.type == "tool_use")
-    return {f["path"]: f["content"] for f in tool_call.input["files"]}
+    return {f["path"]: f["content"] for f in result["files"]}
 
 
 if __name__ == "__main__":
     import os
     import sys
 
-    import anthropic
+    from scheduler.tracked_client import TrackedLLMClient
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("Set ANTHROPIC_API_KEY before running this test.")
@@ -92,6 +94,6 @@ if __name__ == "__main__":
         status="pending",
     )
 
-    client = anthropic.Anthropic()
+    client = TrackedLLMClient()
     files = run_coder(client, demo_step, {}, None, "claude-sonnet-5", run_id="test-run", iteration=0)
     print(json.dumps(files, indent=2))

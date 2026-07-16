@@ -1,5 +1,8 @@
+import sqlite3
 import uuid
+from pathlib import Path
 
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 
 from orchestrator.loop import (
@@ -37,10 +40,17 @@ graph_builder.add_conditional_edges(
     },
 )
 
-graph = graph_builder.compile()
+CHECKPOINT_DB = Path(__file__).parent.parent / "data" / "checkpoints.db"
+CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
+_checkpoint_conn = sqlite3.connect(CHECKPOINT_DB, check_same_thread=False)
+checkpointer = SqliteSaver(_checkpoint_conn)
+
+# Pausing after every critic verdict gives /intervene a real point to inject
+# a correction via update_state() before the loop resumes to the next step.
+graph = graph_builder.compile(checkpointer=checkpointer, interrupt_after=["critic"])
 
 
-def _initial_state(spec: str) -> SwarmState:
+def _initial_state(spec: str, run_id: str | None = None, baseline_mode: bool = False) -> SwarmState:
     return SwarmState(
         spec=spec,
         plan=[],
@@ -54,8 +64,19 @@ def _initial_state(spec: str) -> SwarmState:
         status="planning",
         current_model=None,
         routing_reason=None,
-        run_id=str(uuid.uuid4()),
+        run_id=run_id or str(uuid.uuid4()),
+        baseline_mode=baseline_mode,
+        pending_correction=None,
     )
+
+
+def run_to_completion(state: SwarmState, config: dict) -> SwarmState:
+    """Drive the graph through its interrupt_after=["critic"] pause points
+    until it actually finishes (done/escalated), not just the next pause."""
+    result = graph.invoke(state, config=config)
+    while graph.get_state(config).next:
+        result = graph.invoke(None, config=config)
+    return result
 
 
 if __name__ == "__main__":
@@ -71,7 +92,9 @@ if __name__ == "__main__":
 - Deduplicates rows by configurable key columns
 - Writes deduplicated output"""
 
-    final_state = graph.invoke(_initial_state(demo_spec), config={"recursion_limit": 100})
+    run_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
+    final_state = run_to_completion(_initial_state(demo_spec, run_id=run_id), config)
 
     for event in final_state["events"]:
         print(

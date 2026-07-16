@@ -1,22 +1,40 @@
 from datetime import datetime, timezone
 
-import anthropic
-
 from agents.coder import run_coder
 from agents.critic import passed, run_critic
 from agents.planner import run_planner
+from orchestrator.events import emitter
 from orchestrator.state import SwarmState
 from sandbox.manager import SandboxManager
+from scheduler import router
+from scheduler.models import resolve_model
+from scheduler.tracked_client import TrackedLLMClient
 
-_client = anthropic.Anthropic()
-_sandbox = SandboxManager()
+# Constructed lazily so importing this module (e.g. for tests or graph
+# inspection) doesn't require live API keys or a running Docker daemon.
+_client: TrackedLLMClient | None = None
+_sandbox: SandboxManager | None = None
 
 # container_id per run_id, kept outside SwarmState since it's not serializable
 _containers: dict[str, str] = {}
 
 
+def _get_client() -> TrackedLLMClient:
+    global _client
+    if _client is None:
+        _client = TrackedLLMClient()
+    return _client
+
+
+def _get_sandbox() -> SandboxManager:
+    global _sandbox
+    if _sandbox is None:
+        _sandbox = SandboxManager()
+    return _sandbox
+
+
 def _event(agent: str, action: str, state: SwarmState, **fields) -> dict:
-    return {
+    event = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "run_id": state["run_id"],
         "agent": agent,
@@ -39,6 +57,8 @@ def _event(agent: str, action: str, state: SwarmState, **fields) -> dict:
         "detail": "",
         **fields,
     }
+    emitter.emit(event)
+    return event
 
 
 def _current_step(state: SwarmState):
@@ -46,25 +66,34 @@ def _current_step(state: SwarmState):
 
 
 def planner_node(state: SwarmState) -> dict:
-    plan = run_planner(_client, state["spec"], state["run_id"])
+    spec = state["spec"]
+    correction = state.get("pending_correction")
+    if correction:
+        spec = f"{spec}\n\nHuman correction — apply this to the plan:\n{correction}"
+
+    plan = run_planner(_get_client(), spec, state["run_id"])
     event = _event(
         "planner", "plan_created", state,
-        detail=f"created plan with {len(plan)} steps",
+        detail=f"created plan with {len(plan)} steps"
+        + (" (re-planned from human correction)" if correction else ""),
     )
     return {
         "plan": plan,
         "current_step_index": 0,
         "status": "routing",
         "iteration": 0,
+        "pending_correction": None,
         "events": state["events"] + [event],
     }
 
 
 def router_node(state: SwarmState) -> dict:
-    # Hardcoded for now — replaced by scheduler.router.route() in step 10.
-    model = "claude-sonnet-5"
-    reason = "hardcoded to sonnet (router not wired yet)"
     step = _current_step(state)
+    if state.get("baseline_mode"):
+        model = resolve_model("gpt-5.5")
+        reason = "baseline mode: always gpt-5.5"
+    else:
+        model, reason = router.route(_get_client(), step["description"], step["step_class"], state["run_id"])
     event = _event(
         "router", "classify", state,
         step_id=step["id"], step_class=step["step_class"],
@@ -82,9 +111,10 @@ def router_node(state: SwarmState) -> dict:
 def coder_node(state: SwarmState) -> dict:
     step = _current_step(state)
     run_id = state["run_id"]
+    sandbox = _get_sandbox()
 
     if run_id not in _containers:
-        _containers[run_id] = _sandbox.create()
+        _containers[run_id] = sandbox.create()
 
     last_feedback = None
     if state["critique_history"]:
@@ -93,11 +123,11 @@ def coder_node(state: SwarmState) -> dict:
             last_feedback = "\n".join(last["feedback"])
 
     new_files = run_coder(
-        _client, step, state["workspace_files"], last_feedback,
+        _get_client(), step, state["workspace_files"], last_feedback,
         state["current_model"], run_id, state["iteration"],
     )
     workspace_files = {**state["workspace_files"], **new_files}
-    _sandbox.inject_files(_containers[run_id], workspace_files)
+    sandbox.inject_files(_containers[run_id], workspace_files)
 
     event = _event(
         "coder", "implement", state,
@@ -114,7 +144,7 @@ def coder_node(state: SwarmState) -> dict:
 
 def tester_node(state: SwarmState) -> dict:
     run_id = state["run_id"]
-    results = _sandbox.run_tests(_containers[run_id])
+    results = _get_sandbox().run_tests(_containers[run_id])
     step = _current_step(state)
 
     event = _event(
@@ -133,10 +163,11 @@ def tester_node(state: SwarmState) -> dict:
 def critic_node(state: SwarmState) -> dict:
     step = _current_step(state)
     verdict = run_critic(
-        _client, state["spec"], state["workspace_files"], state["test_results"],
+        _get_client(), state["spec"], state["workspace_files"], state["test_results"],
         state["run_id"], step["id"], state["iteration"],
     )
     step_passed = passed(verdict, state["test_results"])
+    router.record_outcome(step["step_class"], state["current_model"], step_passed, verdict["overall"])
 
     outcome = "pass" if step_passed else "fail"
     event = _event(

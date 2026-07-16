@@ -35,3 +35,5 @@ class SwarmState(TypedDict):
     current_model: Optional[str]
     routing_reason: Optional[str]
     run_id: str
+    baseline_mode: bool         # True: bypass the router, always use gpt-5.5
+    pending_correction: Optional[str]   # human correction injected via /intervene, consumed by the Planner

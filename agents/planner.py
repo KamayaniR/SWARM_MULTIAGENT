@@ -35,17 +35,16 @@ PLAN_TOOL = {
 
 def run_planner(client, spec: str, run_id: str) -> list[PlanStep]:
     """Call the Planner LLM and return a validated list of PlanSteps."""
-    response = client.messages.create(
+    result, _metrics = client.call(
         model="claude-sonnet-5",
-        max_tokens=4096,
         system=SYSTEM_PROMPT,
-        tools=[PLAN_TOOL],
-        tool_choice={"type": "tool", "name": "submit_plan"},
         messages=[{"role": "user", "content": f"Spec:\n\n{spec}"}],
+        tool=PLAN_TOOL,
+        run_id=run_id,
+        agent="planner",
+        max_tokens=4096,
     )
-
-    tool_call = next(b for b in response.content if b.type == "tool_use")
-    raw_steps = tool_call.input["steps"]
+    raw_steps = result["steps"]
 
     steps: list[PlanStep] = []
     for raw in raw_steps:
@@ -67,7 +66,7 @@ if __name__ == "__main__":
     import os
     import sys
 
-    import anthropic
+    from scheduler.tracked_client import TrackedLLMClient
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("Set ANTHROPIC_API_KEY before running this test.")
@@ -78,6 +77,6 @@ if __name__ == "__main__":
 - Deduplicates rows by configurable key columns
 - Writes deduplicated output"""
 
-    client = anthropic.Anthropic()
+    client = TrackedLLMClient()
     plan = run_planner(client, demo_spec, run_id="test-run")
     print(json.dumps(plan, indent=2))

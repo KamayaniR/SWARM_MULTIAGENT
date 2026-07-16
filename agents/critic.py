@@ -59,17 +59,17 @@ def run_critic(
     iteration: int,
 ) -> CriticVerdict:
     """Call the Critic LLM and return a structured verdict."""
-    response = client.messages.create(
+    v, _metrics = client.call(
         model="claude-sonnet-5",
-        max_tokens=2048,
         system=SYSTEM_PROMPT,
-        tools=[VERDICT_TOOL],
-        tool_choice={"type": "tool", "name": "submit_verdict"},
         messages=[{"role": "user", "content": _build_user_message(spec, code, test_results)}],
+        tool=VERDICT_TOOL,
+        run_id=run_id,
+        agent="critic",
+        step_id=step_id,
+        iteration=iteration,
+        max_tokens=2048,
     )
-
-    tool_call = next(b for b in response.content if b.type == "tool_use")
-    v = tool_call.input
 
     return CriticVerdict(
         correctness=v["correctness"],
@@ -95,12 +95,12 @@ if __name__ == "__main__":
     import os
     import sys
 
-    import anthropic
+    from scheduler.tracked_client import TrackedLLMClient
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("Set ANTHROPIC_API_KEY before running this test.")
 
-    client = anthropic.Anthropic()
+    client = TrackedLLMClient()
     spec = "Build a CSV deduplication CLI with --input, --output, --key flags."
 
     print("--- Bad code (should reject, score < 8.5) ---")
