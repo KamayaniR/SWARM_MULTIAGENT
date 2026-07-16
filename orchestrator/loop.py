@@ -33,6 +33,15 @@ def _get_sandbox() -> SandboxManager:
     return _sandbox
 
 
+def cleanup_run(run_id: str) -> None:
+    """Stop and remove the sandbox container for a run, if one was created.
+    Safe to call even if no container exists yet (e.g. the run failed
+    during planning) or cleanup already happened."""
+    container_id = _containers.pop(run_id, None)
+    if container_id is not None:
+        _get_sandbox().cleanup(container_id)
+
+
 def _event(agent: str, action: str, state: SwarmState, **fields) -> dict:
     event = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

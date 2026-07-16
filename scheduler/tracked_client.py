@@ -1,3 +1,4 @@
+import os
 import time
 
 import anthropic
@@ -16,7 +17,12 @@ from scheduler.trace_logger import TraceLogger
 class TrackedLLMClient:
     """Wraps Anthropic + OpenAI behind one interface. Every call() is
     automatically recorded to CostTracker, LatencyTracker, and TraceLogger,
-    and checked against BudgetGuard if one is configured."""
+    and checked against BudgetGuard.
+
+    A BudgetGuard is always active by default (reading BUDGET_PER_RUN /
+    BUDGET_DAILY from the environment) rather than only when a caller
+    remembers to pass one — pass budget_guard explicitly to override
+    (e.g. in tests) or to disable enforcement by setting very high limits."""
 
     def __init__(self, budget_guard: BudgetGuard | None = None):
         self.anthropic_client = anthropic.Anthropic()
@@ -24,6 +30,10 @@ class TrackedLLMClient:
         self.cost_tracker = CostTracker()
         self.latency_tracker = LatencyTracker()
         self.trace_logger = TraceLogger()
+        if budget_guard is None:
+            budget_per_run = float(os.environ.get("BUDGET_PER_RUN", "0.50"))
+            budget_daily = float(os.environ.get("BUDGET_DAILY", "10.00"))
+            budget_guard = BudgetGuard(self.cost_tracker, budget_per_run, budget_daily)
         self.budget_guard = budget_guard
 
     def _call_anthropic(self, model: str, system: str, messages: list[dict], tool: dict, max_tokens: int):
@@ -134,6 +144,10 @@ if __name__ == "__main__":
     with patch.object(anthropic, "Anthropic"), patch.object(openai, "OpenAI"):
         client = TrackedLLMClient()
     client.cost_tracker = CostTracker(tmp_db)
+    # Rebind the guard to the swapped tracker — otherwise it'd still check
+    # against the real data/costs.db, which may already have unrelated
+    # historical spend recorded under this same test run_id.
+    client.budget_guard = BudgetGuard(client.cost_tracker, budget_per_run=999, budget_daily=999)
 
     fake_tool = {"name": "submit_x", "description": "test", "input_schema": {"type": "object", "properties": {}}}
 

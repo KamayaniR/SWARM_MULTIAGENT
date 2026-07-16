@@ -43,15 +43,20 @@ def _config_for(run_id: str) -> dict:
 
 def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool) -> None:
     state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode)
-    _runs[run_id] = run_to_completion(state, _config_for(run_id))
+    try:
+        _runs[run_id] = run_to_completion(state, _config_for(run_id))
+    except Exception as e:
+        # Without this, a mid-run crash (e.g. BudgetGuard tripping) leaves
+        # _runs[run_id] at None forever, and /api/runs/{run_id} reports
+        # "running" indefinitely instead of surfacing the failure.
+        _runs[run_id] = {"status": "error", "detail": str(e), "events": []}
 
 
 def _resume_loop_sync(run_id: str) -> None:
-    config = _config_for(run_id)
-    result = graph.invoke(None, config=config)
-    while graph.get_state(config).next:
-        result = graph.invoke(None, config=config)
-    _runs[run_id] = result
+    try:
+        _runs[run_id] = run_to_completion(None, _config_for(run_id))
+    except Exception as e:
+        _runs[run_id] = {"status": "error", "detail": str(e), "events": []}
 
 
 @app.post("/run")
