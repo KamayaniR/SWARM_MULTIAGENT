@@ -6,6 +6,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 
 from orchestrator.loop import (
+    cleanup_run,
     coder_node,
     critic_node,
     decide_next,
@@ -70,13 +71,24 @@ def _initial_state(spec: str, run_id: str | None = None, baseline_mode: bool = F
     )
 
 
-def run_to_completion(state: SwarmState, config: dict) -> SwarmState:
+def run_to_completion(state: SwarmState | None, config: dict) -> SwarmState:
     """Drive the graph through its interrupt_after=["critic"] pause points
-    until it actually finishes (done/escalated), not just the next pause."""
-    result = graph.invoke(state, config=config)
-    while graph.get_state(config).next:
-        result = graph.invoke(None, config=config)
-    return result
+    until it actually finishes (done/escalated), not just the next pause.
+    Pass state=None to resume an already-started thread from its checkpoint
+    (e.g. after /intervene) instead of starting a fresh run.
+
+    Always cleans up the run's sandbox container on the way out, whether
+    the run finishes normally or raises (e.g. BudgetExceeded) — this is the
+    only exit path from a run, so it's the right place for that cleanup.
+    """
+    run_id = config["configurable"]["thread_id"]
+    try:
+        result = graph.invoke(state, config=config)
+        while graph.get_state(config).next:
+            result = graph.invoke(None, config=config)
+        return result
+    finally:
+        cleanup_run(run_id)
 
 
 if __name__ == "__main__":

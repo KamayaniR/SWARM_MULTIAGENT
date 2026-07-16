@@ -12,6 +12,7 @@ import sys
 import uuid
 
 from orchestrator.graph import _initial_state, graph
+from orchestrator.loop import cleanup_run
 
 if not os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get("OPENAI_API_KEY"):
     sys.exit("Set ANTHROPIC_API_KEY and OPENAI_API_KEY in .env before running this.")
@@ -59,23 +60,26 @@ def main() -> None:
     config = {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
     state = _initial_state(DEMO_SPEC, run_id=run_id)
 
-    resume_input = state
-    while True:
-        for update in graph.stream(resume_input, config=config):
-            for node_name, state_update in update.items():
-                if node_name == "__interrupt__" or not isinstance(state_update, dict):
-                    continue  # LangGraph's pause marker from interrupt_after=["critic"], not a node update
-                print_update(node_name, state_update)
+    try:
+        resume_input = state
+        while True:
+            for update in graph.stream(resume_input, config=config):
+                for node_name, state_update in update.items():
+                    if node_name == "__interrupt__" or not isinstance(state_update, dict):
+                        continue  # LangGraph's pause marker from interrupt_after=["critic"], not a node update
+                    print_update(node_name, state_update)
 
-        if not graph.get_state(config).next:
-            break
-        resume_input = None  # resume from checkpoint past the interrupt
+            if not graph.get_state(config).next:
+                break
+            resume_input = None  # resume from checkpoint past the interrupt
 
-    final_state = graph.get_state(config).values
-    print(f"\n{'=' * 60}")
-    print("LOOP COMPLETE")
-    print(f"final status: {final_state['status']}")
-    print(f"run_id: {run_id}")
+        final_state = graph.get_state(config).values
+        print(f"\n{'=' * 60}")
+        print("LOOP COMPLETE")
+        print(f"final status: {final_state['status']}")
+        print(f"run_id: {run_id}")
+    finally:
+        cleanup_run(run_id)  # stop/remove the sandbox container regardless of outcome
 
 
 if __name__ == "__main__":
