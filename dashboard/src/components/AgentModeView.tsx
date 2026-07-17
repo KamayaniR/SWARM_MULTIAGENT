@@ -2,9 +2,8 @@ import { useMemo, useState } from "react";
 import { useAgentRun } from "../hooks/useAgentRun";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { DecisionLog } from "./DecisionLog";
+import { DownloadCodeButton } from "./DownloadCodeButton";
 import { TeamPanel } from "./TeamPanel";
-
-const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 
 export function AgentModeView() {
   const [spec, setSpec] = useState("");
@@ -54,11 +53,7 @@ export function AgentModeView() {
       )}
 
       {runId && !busy && result && result.roles.length > 0 && (
-        <div className="download-bar">
-          <a className="btn" href={`${API}/api/runs/${runId}/code.zip`} download>
-            ⬇ Download all code (.zip)
-          </a>
-        </div>
+        <DownloadCodeButton runId={runId} />
       )}
 
       <TeamPanel result={result} />
