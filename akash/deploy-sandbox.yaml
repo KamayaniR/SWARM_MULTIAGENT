@@ -1,0 +1,45 @@
+---
+# SWARM sandbox agent on Akash. Runs the in-container HTTP agent
+# (sandbox/agent_server.py) that the orchestrator drives over HTTP:
+#   GET /health  POST /inject  POST /run_tests  POST /reset
+#
+# Deploy TWO of these on Akash Console (the "rent 2, reuse" pool), then give the
+# two public URIs to the AkashSandbox backend. Container listens on 8080; we
+# expose it as HTTP :80 so Console hands back a clean ingress URL.
+version: "2.0"
+
+services:
+  agent:
+    image: himanishprakash23/swarm-sandbox-agent:latest
+    env:
+      # Shared secret required on /inject, /run_tests, /reset. The orchestrator
+      # sends `Authorization: Bearer <this>`. Rotate by redeploying.
+      - SANDBOX_AGENT_TOKEN=h-xrQT2dBY6ES3HHhpJdy0o6-gaaWwyN
+    expose:
+      - port: 8080
+        as: 80
+        to:
+          - global: true
+
+profiles:
+  compute:
+    agent:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 1Gi
+        storage:
+          size: 2Gi
+  placement:
+    dcloud:
+      pricing:
+        agent:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  agent:
+    dcloud:
+      profile: agent
+      count: 1
