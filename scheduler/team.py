@@ -15,16 +15,17 @@ back so the UI can show the back-and-forth in the decision log.
 """
 
 from scheduler import debate
-from scheduler.models import TIER_LADDER, resolve_model
+from scheduler.models import AGENT_MODE_TIER_LADDER, resolve_model
 
 
 def _contrast(pick: str) -> str:
     """The adjacent tier to bake off against `pick`: one cheaper if possible,
-    else one pricier. `pick` is always a full model id from TIER_LADDER."""
-    idx = TIER_LADDER.index(pick)
+    else one pricier. `pick` is always a full model id from
+    AGENT_MODE_TIER_LADDER."""
+    idx = AGENT_MODE_TIER_LADDER.index(pick)
     if idx > 0:
-        return TIER_LADDER[idx - 1]
-    return TIER_LADDER[idx + 1]
+        return AGENT_MODE_TIER_LADDER[idx - 1]
+    return AGENT_MODE_TIER_LADDER[idx + 1]
 
 
 def select_candidates(
@@ -33,10 +34,11 @@ def select_candidates(
     """Return (candidates, reason, transcript) for a role.
 
     candidates is [debate_pick, contrast] — two distinct model ids from
-    TIER_LADDER to bake off. reason + transcript come from the routing debate.
+    AGENT_MODE_TIER_LADDER to bake off. reason + transcript come from the
+    routing debate, run over Agent Mode's own tier pool (not Daily Task's).
     """
     pick, reason, transcript = debate.route_debate(
-        client, step_description, step_class, run_id
+        client, step_description, step_class, run_id, tier_ladder=AGENT_MODE_TIER_LADDER
     )
     pick = resolve_model(pick)
     contrast = _contrast(pick)

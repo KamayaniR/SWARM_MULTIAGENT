@@ -55,7 +55,7 @@ def _initial_state(
     spec: str,
     run_id: str | None = None,
     baseline_mode: bool = False,
-    debate_mode: bool = True,
+    debate_mode: bool = False,
 ) -> SwarmState:
     return SwarmState(
         spec=spec,
