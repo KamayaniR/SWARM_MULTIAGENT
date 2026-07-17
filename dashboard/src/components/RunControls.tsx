@@ -9,7 +9,7 @@ const DEMO_SPEC = `Build a CSV deduplication CLI that:
 - Writes deduplicated output`;
 
 interface RunControlsProps {
-  onRunStarted?: (runId: string) => void;
+  onRunStarted?: (runId: string, baseline: boolean) => void;
 }
 
 export function RunControls({ onRunStarted }: RunControlsProps) {
@@ -26,7 +26,7 @@ export function RunControls({ onRunStarted }: RunControlsProps) {
       });
       const data = await res.json();
       setRunId(data.run_id);
-      onRunStarted?.(data.run_id);
+      onRunStarted?.(data.run_id, baseline);
     } catch (err) {
       console.error("Failed to start run — is the backend running on", API, "?", err);
     } finally {

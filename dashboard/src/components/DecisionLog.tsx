@@ -28,9 +28,10 @@ function formatTime(iso: string): string {
 
 interface DecisionLogProps {
   events: SwarmEvent[];
+  onSelectEvent?: (event: SwarmEvent) => void;
 }
 
-export function DecisionLog({ events }: DecisionLogProps) {
+export function DecisionLog({ events, onSelectEvent }: DecisionLogProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -42,7 +43,12 @@ export function DecisionLog({ events }: DecisionLogProps) {
     <div className="decision-log" ref={scrollRef}>
       {events.length === 0 && <div className="empty">Waiting for events…</div>}
       {events.map((event, i) => (
-        <div className="row" key={`${event.timestamp}-${i}`}>
+        <div
+          className="row"
+          key={`${event.timestamp}-${i}`}
+          onClick={() => onSelectEvent?.(event)}
+          role={onSelectEvent ? "button" : undefined}
+        >
           <span className="timestamp">{formatTime(event.timestamp)}</span>
           <span
             className="agent-tag"
