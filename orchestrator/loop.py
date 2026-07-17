@@ -6,7 +6,7 @@ from agents.planner import run_planner
 from orchestrator.events import emitter
 from orchestrator.state import SwarmState
 from sandbox.manager import SandboxManager
-from scheduler import router
+from scheduler import debate, router
 from scheduler.models import resolve_model
 from scheduler.tracked_client import TrackedLLMClient
 
@@ -98,11 +98,28 @@ def planner_node(state: SwarmState) -> dict:
 
 def router_node(state: SwarmState) -> dict:
     step = _current_step(state)
+    new_events: list[dict] = []
+
     if state.get("baseline_mode"):
         model = resolve_model("gpt-5.5")
         reason = "baseline mode: always gpt-5.5"
+    elif state.get("debate_mode", True):
+        model, reason, transcript = debate.route_debate(
+            _get_client(), step["description"], step["step_class"], state["run_id"]
+        )
+        # Surface each turn of the debate so the decision log shows the
+        # back-and-forth, not just the final pick.
+        for turn in transcript:
+            verb = "accepts" if turn["accepted"] else "proposes"
+            new_events.append(_event(
+                "router", "debate_turn", state,
+                step_id=step["id"], step_class=step["step_class"],
+                model=turn["proposal"],
+                detail=f"{turn['speaker']} {verb} {turn['proposal']}: {turn['rationale']}",
+            ))
     else:
         model, reason = router.route(_get_client(), step["description"], step["step_class"], state["run_id"])
+
     event = _event(
         "router", "classify", state,
         step_id=step["id"], step_class=step["step_class"],
@@ -113,7 +130,7 @@ def router_node(state: SwarmState) -> dict:
         "current_model": model,
         "routing_reason": reason,
         "status": "coding",
-        "events": state["events"] + [event],
+        "events": state["events"] + new_events + [event],
     }
 
 

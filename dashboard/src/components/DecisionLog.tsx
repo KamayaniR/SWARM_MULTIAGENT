@@ -7,6 +7,8 @@ const AGENT_COLOR_VAR: Record<Agent, string> = {
   coder: "--agent-coder",
   tester: "--agent-tester",
   critic: "--agent-critic",
+  team_planner: "--agent-planner",
+  evaluator: "--agent-critic",
 };
 
 const DIFFICULTY_COLOR_VAR: Record<string, string> = {
