@@ -8,7 +8,7 @@ dashboard follows this exact shape. Freeze this — all tracks code against it.
 interface SwarmEvent {
   timestamp: string;
   run_id: string;
-  agent: "planner" | "coder" | "critic" | "tester" | "router";
+  agent: "planner" | "coder" | "critic" | "tester" | "router" | "debate" | "evaluator" | "team_planner";
   action: string;
   step_id: string;
   step_class: string;
@@ -25,6 +25,9 @@ interface SwarmEvent {
   critic_score: number | null;
   tests_passed: number | null;
   tests_total: number | null;
+  candidates: string[] | null;      // Agent mode: the candidate model pair in play
+  similarity_score: number | null;  // Agent mode: cosine score on similarity_skip events
+  matched_step_id: string | null;   // Agent mode: history row id the step matched
   detail: string;
 }
 ```
@@ -46,6 +49,16 @@ interface SwarmEvent {
 - `cost_usd` / `latency_ms` — `0` for non-LLM events (e.g. tester events),
   never `null`, so the cost meter can sum blindly without null checks.
 - `outcome` — `null` until the event represents a completed attempt.
+- `agent: "debate"` — Agent-mode deliberation turns (`deliberation_turn`):
+  the planner voice / debate voice / judge exchange that selects the two
+  candidate models. `model` is the voice speaking, `candidates` its proposal.
+- `agent: "evaluator"` — Agent-mode comparison results: `candidate_result`
+  (one per candidate, carries real cost/latency/critic_score) and
+  `winner_selected` (`model` = winner, `candidates` = the pair compared).
+- `similarity_skip` (agent `"router"`) — the step matched a historical step
+  above the similarity threshold; deliberation was skipped and the stored
+  winning model reused. Carries `similarity_score` + `matched_step_id`.
+  Execution still runs in full — only the deliberation is skipped.
 
 ## Python mirror
 

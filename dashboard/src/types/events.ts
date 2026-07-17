@@ -5,7 +5,8 @@ export type Agent =
   | "tester"
   | "router"
   | "team_planner"
-  | "evaluator";
+  | "evaluator"
+  | "debate";
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export type Outcome = "pass" | "fail" | "error";
 
@@ -30,6 +31,9 @@ export interface SwarmEvent {
   critic_score: number | null;
   tests_passed: number | null;
   tests_total: number | null;
+  candidates: string[] | null;
+  similarity_score: number | null;
+  matched_step_id: string | null;
   detail: string;
 }
 
