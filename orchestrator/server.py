@@ -3,6 +3,7 @@ import uuid
 from typing import Literal, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -17,6 +18,12 @@ from scheduler.cost_tracker import CostTracker
 from scheduler.trace_logger import TraceLogger
 
 app = FastAPI(title="Swarm Control")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # dashboard runs on a different port in dev
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # CostTracker/TraceLogger need no API credentials — read from the same
 # SQLite/JSONL files the (separately, lazily constructed) TrackedLLMClient
@@ -286,12 +293,37 @@ async def reset_scheduler():
     return {"status": "reset"}
 
 
+def _json_safe(value: float) -> float | None:
+    """cost_per_converged_task() legitimately returns float('inf') whenever
+    calls exist but nothing has passed yet -- but `Infinity` isn't valid
+    JSON, so convert to None at the API boundary."""
+    return None if value == float("inf") else value
+
+
+@app.get("/api/costs")
+async def get_collective_costs():
+    """Aggregated across every prompt ever sent to this server, not scoped
+    to one run_id -- the dashboard's default view."""
+    return {
+        "total_usd": _cost_tracker.total_cost(),
+        "breakdown": _cost_tracker.breakdown(),
+        "accuracy_per_model": _cost_tracker.accuracy_per_model(),
+        "latency_per_model": _cost_tracker.latency_per_model(),
+        "cost_per_step_class": _cost_tracker.cost_per_step_class(),
+        "cost_per_converged_task": _json_safe(_cost_tracker.cost_per_converged_task()),
+    }
+
+
 @app.get("/api/costs/{run_id}")
 async def get_costs(run_id: str):
     return {
         "run_id": run_id,
         "total_usd": _cost_tracker.total_cost(run_id),
         "breakdown": _cost_tracker.breakdown(run_id),
+        "accuracy_per_model": _cost_tracker.accuracy_per_model(run_id),
+        "latency_per_model": _cost_tracker.latency_per_model(run_id),
+        "cost_per_step_class": _cost_tracker.cost_per_step_class(run_id),
+        "cost_per_converged_task": _json_safe(_cost_tracker.cost_per_converged_task(run_id)),
     }
 
 
@@ -307,21 +339,6 @@ async def compare_costs(baseline_id: str, scheduler_id: str):
     }
 
 
-@app.get("/api/traces/{run_id}")
-async def get_traces(run_id: str):
-    return {"run_id": run_id, "entries": _trace_logger.read(run_id)}
-
-
-@app.get("/api/runs/{run_id}")
-async def get_run_status(run_id: str):
-    if run_id not in _runs:
-        return {"run_id": run_id, "status": "not_found"}
-    final_state = _runs[run_id]
-    if final_state is None:
-        return {"run_id": run_id, "status": "running"}
-    return {"run_id": run_id, "status": final_state["status"], "events": final_state["events"]}
-
-
 @app.get("/api/runs")
 async def list_run_history():
     """Index of all stored runs (prompt + selected + status + cost), newest first."""
@@ -330,7 +347,9 @@ async def list_run_history():
 
 @app.get("/api/runs/{run_id}/history")
 async def get_run_history(run_id: str):
-    """The full record for a run: prompt, plan, generated code, and selected solution."""
+    """The full record for a run: prompt, plan, generated code, and selected
+    solution -- including `accuracy`, the winning solution's real Critic
+    score (0-10), the source for the dashboard's per-run accuracy display."""
     hist = artifacts.get_run_history(run_id)
     if hist is None:
         return {"run_id": run_id, "status": "not_found"}
@@ -359,6 +378,31 @@ async def download_run_code_zip(run_id: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{run_id}.zip"'},
     )
+
+
+@app.get("/api/traces/{run_id}")
+async def get_traces(run_id: str):
+    return {"run_id": run_id, "entries": _trace_logger.read(run_id)}
+
+
+@app.get("/api/runs/{run_id}")
+async def get_run_status(run_id: str):
+    if run_id not in _runs:
+        return {"run_id": run_id, "status": "not_found"}
+    final_state = _runs[run_id]
+    if final_state is None:
+        return {"run_id": run_id, "status": "running"}
+    return {
+        "run_id": run_id,
+        "status": final_state["status"],
+        "events": final_state["events"],
+        "plan": final_state.get("plan", []),
+        # The actual generated code -- previously computed but never
+        # returned by this endpoint, so the dashboard had no way to show
+        # anything but pass/fail status.
+        "workspace_files": final_state.get("workspace_files", {}),
+        "detail": final_state.get("detail"),
+    }
 
 
 @app.post("/intervene")

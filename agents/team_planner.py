@@ -39,11 +39,14 @@ TEAM_TOOL = {
                         "id", "name", "responsibility", "step_class",
                         "probe_description", "acceptance",
                     ],
+                    "additionalProperties": False,
                 },
             }
         },
         "required": ["roles"],
+        "additionalProperties": False,
     },
+    "strict": True,
 }
 
 

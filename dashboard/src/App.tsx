@@ -63,7 +63,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Swarm Control</h1>
+        <h1>The Yield</h1>
         <p className="app-subtitle">Cost-aware multi-agent build system — live dashboard</p>
       </header>
 

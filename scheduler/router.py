@@ -41,7 +41,9 @@ CLASSIFY_TOOL = {
             "difficulty": {"type": "string", "enum": ["EASY", "MEDIUM", "HARD"]},
         },
         "required": ["difficulty"],
+        "additionalProperties": False,
     },
+    "strict": True,
 }
 
 

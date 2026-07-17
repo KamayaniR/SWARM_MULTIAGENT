@@ -21,11 +21,19 @@ FILES_TOOL = {
                         "content": {"type": "string"},
                     },
                     "required": ["path", "content"],
+                    "additionalProperties": False,
                 },
             }
         },
         "required": ["files"],
+        "additionalProperties": False,
     },
+    # Without strict mode, Anthropic's tool-use is best-effort JSON, not
+    # schema-enforced -- reproduced live: for a trivial prompt ("write a
+    # palindrome code in python") the model returned `files` as a bare list
+    # of strings instead of {path, content} objects, crashing run_coder()'s
+    # dict comprehension below with "string indices must be integers".
+    "strict": True,
 }
 
 

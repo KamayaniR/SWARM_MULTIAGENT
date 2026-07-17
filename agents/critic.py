@@ -28,7 +28,9 @@ VERDICT_TOOL = {
             "feedback",
             "failure_type",
         ],
+        "additionalProperties": False,
     },
+    "strict": True,
 }
 
 PASS_THRESHOLD = 8.5

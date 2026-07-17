@@ -104,7 +104,9 @@ def _debate_tool(tier_ladder: list[str]) -> dict:
                 },
             },
             "required": ["accept", "model", "rationale"],
+            "additionalProperties": False,
         },
+        "strict": True,
     }
 
 

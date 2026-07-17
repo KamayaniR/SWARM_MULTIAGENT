@@ -6,9 +6,13 @@ import type { TraceEvent } from "./types";
 export const CRITIC_PASS_THRESHOLD = 8.5;
 
 export type StageId = "planner" | "scheduler" | "coder" | "tester" | "critic";
+// Real agent names from this backend's orchestrator/loop.py + agent_mode.py
+// (verified against actual live trace events, not assumed): "router" is
+// Task mode's single/debate routing; "debate" and "evaluator" only appear
+// in Agent mode's deliberation/comparison path.
 const STAGE_AGENTS: Record<StageId, string[]> = {
-  planner: ["planner"],
-  scheduler: ["scheduler", "scheduler_classifier", "scheduler_debate"],
+  planner: ["planner", "team_planner"],
+  scheduler: ["router", "debate", "evaluator"],
   coder: ["coder"],
   tester: ["tester"],
   critic: ["critic"],
@@ -23,35 +27,21 @@ export interface StageInfo {
   model?: string;
 }
 
-function humanizeAction(event: TraceEvent): string {
-  switch (event.action) {
-    case "llm_call":
-      return "calling model...";
-    case "plan_created":
-      return `planned ${event.step_count} step(s)`;
-    case "route":
-      return `routed to ${event.model}`;
-    case "debate_transcript":
-      return "debating tier...";
-    case "implement":
-      return "wrote files";
-    case "run_tests":
-      return `${event.tests_passed}/${event.tests_total} tests passed`;
-    case "verdict":
-      return `scored ${event.score}`;
-    case "replan":
-      return "flagged for replan";
-    case "escalate":
-      return "escalated to human";
-    case "history_reset":
-      return "reset suspicious history";
-    default:
-      return event.action;
-  }
+// This backend's _event() helper always fills in a human-readable `detail`
+// string server-side (e.g. "nano classified as EASY", "wrote 1 file(s)",
+// "score 9.5 -> PASS") -- using it directly is more robust than
+// reconstructing a message from individual fields, and stays correct even
+// as they add new action types this dashboard doesn't know about yet.
+function describeEvent(event: TraceEvent): string {
+  return (event.detail as string) || (event.action as string);
 }
 
 export function deriveStages(events: TraceEvent[], isRunning: boolean): StageInfo[] {
-  const lastSeq = events.length > 0 ? events[events.length - 1].seq : -1;
+  // Object-identity comparison against the last element of the same array
+  // (stageEvents is filtered from `events`, so the references are shared)
+  // -- works regardless of whether events carry `seq` (ours) or only
+  // `timestamp` (this backend's), since it doesn't need either field.
+  const lastEvent = events.length > 0 ? events[events.length - 1] : null;
 
   return STAGE_ORDER.map((id) => {
     const label = id[0].toUpperCase() + id.slice(1);
@@ -60,7 +50,7 @@ export function deriveStages(events: TraceEvent[], isRunning: boolean): StageInf
       return { id, label, status: "pending", detail: "—" };
     }
     const last = stageEvents[stageEvents.length - 1];
-    const isActive = isRunning && last.seq === lastSeq;
+    const isActive = isRunning && last === lastEvent;
     const model = [...stageEvents].reverse().find((e) => typeof e.model === "string")?.model as
       | string
       | undefined;
@@ -68,7 +58,7 @@ export function deriveStages(events: TraceEvent[], isRunning: boolean): StageInf
       id,
       label,
       status: isActive ? "active" : "idle",
-      detail: humanizeAction(last),
+      detail: describeEvent(last),
       model,
     };
   });
@@ -103,11 +93,19 @@ export function deriveRoutingSteps(events: TraceEvent[], isRunning: boolean): Ro
     }
     const entry = byStep.get(stepId)!;
     if (e.step_class) entry.step_class = e.step_class as string;
-    if (e.action === "route" && typeof e.model === "string") {
+    // "classify" is this backend's routing-decision event (their name for
+    // what we'd call "route") -- fired once per attempt, whether the model
+    // came from a single nano classification, a converged debate, a
+    // similarity-skip, or an agent-mode deliberation.
+    if (e.action === "classify" && typeof e.model === "string") {
       if (!entry.tiers.includes(e.model)) entry.tiers.push(e.model);
       entry.escalated = entry.tiers.length > 1;
       entry.status = "active";
     }
+    // Real per-call cost/latency live only in the cost tracker DB on this
+    // backend -- every trace event's cost_usd is a hardcoded 0.0, so this
+    // accumulator is deliberately left as-is rather than pretending
+    // otherwise; per-step cost isn't retrievable from the event stream here.
     if (typeof e.cost_usd === "number") entry.cost_usd += e.cost_usd;
     if (e.action === "verdict") {
       entry.status = e.outcome === "pass" ? "passed" : "failed";
@@ -132,16 +130,16 @@ export interface CriticScorePoint {
 
 export function deriveCriticScores(events: TraceEvent[]): CriticScorePoint[] {
   return events
-    .filter((e) => e.action === "verdict" && typeof e.score === "number")
+    .filter((e) => e.action === "verdict" && typeof e.critic_score === "number")
     .map((e) => ({
       step_id: e.step_id as string,
-      score: e.score as number,
+      score: e.critic_score as number,
       passed: e.outcome === "pass",
     }));
 }
 
 export function describeLogLine(event: TraceEvent): string {
-  const parts = [event.agent, humanizeAction(event)];
-  if (typeof event.cost_usd === "number") parts.push(`$${event.cost_usd.toFixed(3)}`);
+  const parts = [event.agent, describeEvent(event)];
+  if (typeof event.model === "string") parts.push(event.model);
   return parts.join(" · ");
 }
