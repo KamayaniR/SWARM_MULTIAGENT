@@ -54,6 +54,13 @@ class CostTracker:
         ).fetchone()
         return row[0]
 
+    def total_latency(self, run_id: str) -> float:
+        """Sum of per-call latency (ms) for a run — the wall time spent in LLM calls."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(latency_ms), 0) FROM calls WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return row[0]
+
     def total_cost_today(self, today: str) -> float:
         """today: 'YYYY-MM-DD' — matched against the date prefix of ISO timestamps."""
         row = self.conn.execute(

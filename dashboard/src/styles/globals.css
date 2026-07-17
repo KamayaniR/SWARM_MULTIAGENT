@@ -146,6 +146,19 @@ body {
   border-color: transparent;
 }
 
+/* Anchor styled as a button (e.g. the code .zip download link). */
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+  line-height: 1.4;
+}
+
+.download-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 12px 0;
+}
+
 .run-id {
   font-size: 0.7rem;
   color: var(--text-muted);
