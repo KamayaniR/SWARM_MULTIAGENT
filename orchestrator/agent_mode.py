@@ -26,7 +26,7 @@ from agents.critic import passed, run_critic
 from agents.team_planner import AgentRole, run_team_planner
 from orchestrator.events import emitter
 from orchestrator.loop import _get_client, _get_sandbox
-from scheduler import team
+from scheduler import plan_cache, team
 from scheduler.models import MODEL_PRICES, resolve_model
 
 
@@ -43,10 +43,18 @@ class CandidateResult(TypedDict):
     error: Optional[str]
 
 
+class Recommendations(TypedDict):
+    accuracy: Optional[str]   # highest critic_score
+    latency: Optional[str]    # fastest (among passers)
+    cost: Optional[str]       # cheapest (among passers)
+    fits_all: Optional[str]   # set when one model wins all three objectives
+
+
 class RoleResult(TypedDict):
     role: AgentRole
     candidates: list[CandidateResult]
-    recommended_model: Optional[str]
+    recommended_model: Optional[str]     # cheapest passer (kept for back-compat)
+    recommendations: Recommendations     # best model per objective
 
 
 class TeamResult(TypedDict):
@@ -190,6 +198,25 @@ def _recommend(candidates: list[CandidateResult]) -> Optional[str]:
     return max(candidates, key=lambda c: c["critic_score"])["model"]
 
 
+def _recommendations(candidates: list[CandidateResult]) -> Recommendations:
+    """Best model per objective. There's no single 'best' model — it depends on
+    what you optimise for, so we surface the winner for accuracy, latency, and
+    cost separately, and flag when one model happens to win all three.
+
+    Accuracy ranks over all candidates (even a failing model can be the most
+    accurate attempt). Latency and cost rank only over passers — a fast/cheap
+    model that doesn't actually work isn't a real option."""
+    if not candidates:
+        return Recommendations(accuracy=None, latency=None, cost=None, fits_all=None)
+
+    passers = [c for c in candidates if c["passed"]] or candidates
+    accuracy = max(candidates, key=lambda c: c["critic_score"])["model"]
+    latency = min(passers, key=lambda c: c["latency_ms"])["model"]
+    cost = min(passers, key=lambda c: c["cost_usd"])["model"]
+    fits_all = accuracy if accuracy == latency == cost else None
+    return Recommendations(accuracy=accuracy, latency=latency, cost=cost, fits_all=fits_all)
+
+
 def run_agent_mode(spec: str, run_id: str) -> TeamResult:
     """Drive the full agent-mode orchestration to completion. Synchronous —
     intended to run in a background thread (see server.py), like the loop."""
@@ -208,6 +235,27 @@ def run_agent_mode(spec: str, run_id: str) -> TeamResult:
         _emit(run_id, "team_planner", "team_planned",
               detail=f"team of {len(roles)} agent(s): "
                      + ", ".join(r["name"] for r in roles))
+
+        # If a prior run's team plan is structurally similar, reuse its cached
+        # bake-off comparison instead of re-running every candidate model.
+        signature = plan_cache.signature_from_roles(roles)
+        hit = plan_cache.lookup("team", signature)
+        if hit is not None:
+            cached: TeamResult = hit["payload"]
+            cached["run_id"] = run_id
+            cached["status"] = "done"
+            cached["detail"] = (
+                f"reused prior bake-off ({hit['score'] * 100:.0f}% team match "
+                f"to run {hit['run_id'][:8]})"
+            )
+            _emit(run_id, "cache", "cache_hit", cost_usd=0.0,
+                  detail=f"reused team from run {hit['run_id'][:8]} "
+                         f"({hit['score'] * 100:.0f}% match) — skipped "
+                         f"{len(roles)} bake-off(s)")
+            _agent_runs[run_id] = cached
+            return cached
+        _emit(run_id, "cache", "cache_miss",
+              detail="no prior team matched — running bake-off")
 
         for role in roles:
             candidates_models, reason, transcript = team.select_candidates(
@@ -232,12 +280,16 @@ def run_agent_mode(spec: str, run_id: str) -> TeamResult:
                 ))
 
             recommended = _recommend(candidates)
+            recommendations = _recommendations(candidates)
             _emit(run_id, "evaluator", "recommendation", step_id=role["id"],
                   step_class=role["step_class"], model=recommended,
-                  detail=f"[{role['name']}] recommend {recommended}")
+                  detail=f"[{role['name']}] best — accuracy: {recommendations['accuracy']}, "
+                         f"latency: {recommendations['latency']}, cost: {recommendations['cost']}"
+                         + (f" (fits all: {recommendations['fits_all']})" if recommendations["fits_all"] else ""))
             result["roles"].append({
                 "role": role, "candidates": candidates,
                 "recommended_model": recommended,
+                "recommendations": recommendations,
             })
 
         # Grand total: team-planning + debates (under run_id) + every candidate.
@@ -249,6 +301,15 @@ def run_agent_mode(spec: str, run_id: str) -> TeamResult:
         result["detail"] = f"composed {len(result['roles'])} agent(s)"
         _emit(run_id, "evaluator", "team_complete", cost_usd=total,
               detail=f"team ready — {len(result['roles'])} agent(s), ${total:.4f} total")
+
+        # Cache the finished bake-off so a future structurally-similar team plan
+        # can skip it. Representative score = mean of each role's best candidate.
+        role_bests = [
+            max((c["critic_score"] for c in r["candidates"]), default=0.0)
+            for r in result["roles"]
+        ]
+        avg_score = sum(role_bests) / len(role_bests) if role_bests else None
+        plan_cache.store("team", run_id, spec, signature, result, avg_score)
     except Exception as e:
         result["status"] = "error"
         result["detail"] = str(e)

@@ -8,7 +8,7 @@ dashboard follows this exact shape. Freeze this — all tracks code against it.
 interface SwarmEvent {
   timestamp: string;
   run_id: string;
-  agent: "planner" | "coder" | "critic" | "tester" | "router";
+  agent: "planner" | "coder" | "critic" | "tester" | "router" | "cache";
   action: string;
   step_id: string;
   step_class: string;

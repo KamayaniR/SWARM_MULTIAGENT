@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from orchestrator.agent_mode import get_agent_run, run_agent_mode
 from orchestrator.events import emitter
 from orchestrator.graph import _initial_state, graph, run_to_completion
+from scheduler import plan_cache
 from scheduler import router as router_module
 from scheduler.cost_tracker import CostTracker
 from scheduler.trace_logger import TraceLogger
@@ -47,10 +48,32 @@ def _config_for(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
 
 
+def _maybe_cache(final_state: dict, spec: str, run_id: str) -> None:
+    """Store a genuinely-completed run's verified solution in the plan cache so
+    future structurally-similar plans can reuse it. Skip runs that were
+    themselves served from the cache (nothing new to store) and non-successful
+    runs (the cache must only hold verified solutions)."""
+    if final_state.get("status") != "done" or final_state.get("served_from_cache"):
+        return
+    history = final_state.get("critique_history") or []
+    critic_score = history[-1]["overall"] if history else None
+    signature = plan_cache.signature_from_plan(final_state["plan"])
+    plan_cache.store(
+        "loop", run_id, spec, signature,
+        {"files": final_state["workspace_files"]}, critic_score,
+    )
+
+
 def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = True) -> None:
-    state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode)
+    # Baseline runs bypass the cache so the cost comparison stays apples-to-apples.
+    state = _initial_state(
+        spec, run_id=run_id, baseline_mode=baseline_mode,
+        debate_mode=debate_mode, cache_enabled=not baseline_mode,
+    )
     try:
-        _runs[run_id] = run_to_completion(state, _config_for(run_id))
+        final_state = run_to_completion(state, _config_for(run_id))
+        _runs[run_id] = final_state
+        _maybe_cache(final_state, spec, run_id)
     except Exception as e:
         # Without this, a mid-run crash (e.g. BudgetGuard tripping) leaves
         # _runs[run_id] at None forever, and /api/runs/{run_id} reports
@@ -60,7 +83,9 @@ def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: boo
 
 def _resume_loop_sync(run_id: str) -> None:
     try:
-        _runs[run_id] = run_to_completion(None, _config_for(run_id))
+        final_state = run_to_completion(None, _config_for(run_id))
+        _runs[run_id] = final_state
+        _maybe_cache(final_state, final_state.get("spec", ""), run_id)
     except Exception as e:
         _runs[run_id] = {"status": "error", "detail": str(e), "events": []}
 

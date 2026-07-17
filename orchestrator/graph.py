@@ -6,9 +6,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 
 from orchestrator.loop import (
+    cache_gate_node,
+    cache_verify_node,
     cleanup_run,
     coder_node,
     critic_node,
+    decide_after_cache,
+    decide_after_verify,
     decide_next,
     planner_node,
     router_node,
@@ -18,13 +22,27 @@ from orchestrator.state import SwarmState
 
 graph_builder = StateGraph(SwarmState)
 graph_builder.add_node("planner", planner_node)
+graph_builder.add_node("cache_gate", cache_gate_node)
+graph_builder.add_node("cache_verify", cache_verify_node)
 graph_builder.add_node("router", router_node)
 graph_builder.add_node("coder", coder_node)
 graph_builder.add_node("tester", tester_node)
 graph_builder.add_node("critic", critic_node)
 
 graph_builder.set_entry_point("planner")
-graph_builder.add_edge("planner", "router")
+graph_builder.add_edge("planner", "cache_gate")
+# On a structural plan match, verify-and-reuse; otherwise straight to the router.
+graph_builder.add_conditional_edges(
+    "cache_gate",
+    decide_after_cache,
+    {"verify": "cache_verify", "no_match": "router"},
+)
+# Verified reuse ends the run; a failed verify falls through warm-started.
+graph_builder.add_conditional_edges(
+    "cache_verify",
+    decide_after_verify,
+    {"done": END, "fallthrough": "router"},
+)
 graph_builder.add_edge("router", "coder")
 graph_builder.add_edge("coder", "tester")
 graph_builder.add_edge("tester", "critic")
@@ -56,6 +74,7 @@ def _initial_state(
     run_id: str | None = None,
     baseline_mode: bool = False,
     debate_mode: bool = True,
+    cache_enabled: bool = True,
 ) -> SwarmState:
     return SwarmState(
         spec=spec,
@@ -74,6 +93,9 @@ def _initial_state(
         baseline_mode=baseline_mode,
         debate_mode=debate_mode,
         pending_correction=None,
+        cache_enabled=cache_enabled,
+        cache_hit=None,
+        served_from_cache=False,
     )
 
 

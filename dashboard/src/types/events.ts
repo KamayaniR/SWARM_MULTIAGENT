@@ -4,6 +4,7 @@ export type Agent =
   | "critic"
   | "tester"
   | "router"
+  | "cache"
   | "team_planner"
   | "evaluator";
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
@@ -59,10 +60,18 @@ export interface CandidateResult {
   error: string | null;
 }
 
+export interface Recommendations {
+  accuracy: string | null; // highest critic_score
+  latency: string | null; // fastest (among passers)
+  cost: string | null; // cheapest (among passers)
+  fits_all: string | null; // set when one model wins all three objectives
+}
+
 export interface RoleResult {
   role: AgentRole;
   candidates: CandidateResult[];
-  recommended_model: string | null;
+  recommended_model: string | null; // cheapest passer (kept for back-compat)
+  recommendations: Recommendations; // best model per objective
 }
 
 export interface TeamResult {

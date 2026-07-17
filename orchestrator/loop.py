@@ -6,7 +6,7 @@ from agents.planner import run_planner
 from orchestrator.events import emitter
 from orchestrator.state import SwarmState
 from sandbox.manager import SandboxManager
-from scheduler import debate, router
+from scheduler import debate, plan_cache, router
 from scheduler.models import resolve_model
 from scheduler.tracked_client import TrackedLLMClient
 
@@ -92,6 +92,84 @@ def planner_node(state: SwarmState) -> dict:
         "status": "routing",
         "iteration": 0,
         "pending_correction": None,
+        "events": state["events"] + [event],
+    }
+
+
+def cache_gate_node(state: SwarmState) -> dict:
+    """After planning, look for a past successful run whose plan is structurally
+    similar (>= threshold) to this one. On a hit we hand off to cache_verify to
+    reuse that run's solution and skip the per-step debate + coder loop."""
+    if not state.get("cache_enabled", True):
+        return {"cache_hit": None}
+
+    signature = plan_cache.signature_from_plan(state["plan"])
+    match = plan_cache.lookup("loop", signature)
+    if match is None:
+        event = _event(
+            "cache", "cache_miss", state,
+            detail="no prior plan matched — running full loop",
+        )
+        return {"cache_hit": None, "events": state["events"] + [event]}
+
+    event = _event(
+        "cache", "cache_lookup", state,
+        detail=f"plan matches run {match['run_id'][:8]} "
+               f"({match['score'] * 100:.0f}%) — verifying before reuse",
+    )
+    return {"cache_hit": match, "events": state["events"] + [event]}
+
+
+def cache_verify_node(state: SwarmState) -> dict:
+    """Replay the matched run's files through the sandbox + Critic against the
+    NEW spec. Pass -> serve instantly (debate + coder + retries all skipped).
+    Fail -> keep the files as a warm start and fall through to the normal loop."""
+    run_id = state["run_id"]
+    match = state["cache_hit"]
+    cached_files = match["payload"]["files"]
+    sandbox = _get_sandbox()
+
+    if run_id not in _containers:
+        _containers[run_id] = sandbox.create()
+    sandbox.inject_files(_containers[run_id], cached_files)
+    results = sandbox.run_tests(_containers[run_id])
+
+    verdict = run_critic(
+        _get_client(), state["spec"], cached_files, results, run_id, "cache", 0
+    )
+    ok = passed(verdict, results)
+
+    if ok:
+        event = _event(
+            "cache", "cache_hit", state,
+            critic_score=verdict["overall"], outcome="pass",
+            tests_passed=results["tests_passed"], tests_total=results["tests_total"],
+            detail=f"reused run {match['run_id'][:8]} "
+                   f"({match['score'] * 100:.0f}% plan match) — verified, "
+                   f"skipped debate + coder",
+        )
+        return {
+            "workspace_files": cached_files,
+            "test_results": results,
+            "critique_history": state["critique_history"] + [verdict],
+            "status": "done",
+            "served_from_cache": True,
+            "events": state["events"] + [event],
+        }
+
+    event = _event(
+        "cache", "cache_verify_fail", state,
+        critic_score=verdict["overall"], outcome="fail",
+        tests_passed=results["tests_passed"], tests_total=results["tests_total"],
+        detail=f"cached solution from run {match['run_id'][:8]} failed on new "
+               f"spec — warm-starting the full loop",
+    )
+    return {
+        "workspace_files": cached_files,
+        "test_results": None,
+        "status": "routing",
+        "current_step_index": 0,
+        "iteration": 0,
         "events": state["events"] + [event],
     }
 
@@ -233,6 +311,16 @@ def critic_node(state: SwarmState) -> dict:
         updates["iteration"] = next_iteration
         updates["status"] = "routing"
     return updates
+
+
+def decide_after_cache(state: SwarmState) -> str:
+    return "verify" if state.get("cache_hit") else "no_match"
+
+
+def decide_after_verify(state: SwarmState) -> str:
+    # cache_verify sets status="done" on a verified hit, else "routing" to fall
+    # through into the normal loop warm-started with the cached files.
+    return "done" if state["status"] == "done" else "fallthrough"
 
 
 def decide_next(state: SwarmState) -> str:
