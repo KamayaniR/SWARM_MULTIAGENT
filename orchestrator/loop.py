@@ -6,7 +6,7 @@ from agents.critic import passed, run_critic
 from agents.planner import run_planner
 from orchestrator.events import emitter
 from orchestrator.state import SwarmState
-from sandbox.manager import SandboxManager
+from sandbox.factory import get_sandbox as _make_sandbox
 from scheduler import debate, deliberation, router, similarity
 from scheduler.models import MODEL_PRICES, resolve_model
 from scheduler.tracked_client import TrackedLLMClient
@@ -14,7 +14,9 @@ from scheduler.tracked_client import TrackedLLMClient
 # Constructed lazily so importing this module (e.g. for tests or graph
 # inspection) doesn't require live API keys or a running Docker daemon.
 _client: TrackedLLMClient | None = None
-_sandbox: SandboxManager | None = None
+# SandboxManager (local Docker) or AkashSandbox (pooled Akash), chosen at
+# runtime by SANDBOX_BACKEND via sandbox.factory.
+_sandbox = None
 
 # container_id per run_id, kept outside SwarmState since it's not serializable
 _containers: dict[str, str] = {}
@@ -27,10 +29,13 @@ def _get_client() -> TrackedLLMClient:
     return _client
 
 
-def _get_sandbox() -> SandboxManager:
+def _get_sandbox():
+    """Process-wide sandbox backend (local Docker or Akash pool), selected by
+    SANDBOX_BACKEND. Constructed lazily and reused across runs; both backends
+    expose the same create/inject_files/run_tests/cleanup surface."""
     global _sandbox
     if _sandbox is None:
-        _sandbox = SandboxManager()
+        _sandbox = _make_sandbox()
     return _sandbox
 
 

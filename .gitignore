@@ -5,3 +5,7 @@ __pycache__/
 .scheduler_state.json
 runs/
 data/
+
+# Pomerium local secrets / certs
+pomerium/.env.pomerium
+pomerium/certs/

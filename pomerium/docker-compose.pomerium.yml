@@ -1,0 +1,25 @@
+# Runs Pomerium as an identity-aware proxy in front of the Swarm Control
+# dashboard. The FastAPI server (orchestrator/server.py) keeps running on the
+# HOST at :8000 as usual — Pomerium reaches it via host.docker.internal.
+#
+#   1. cp pomerium/.env.pomerium.example pomerium/.env.pomerium  (then fill it in)
+#   2. ./pomerium/gen-certs.sh
+#   3. uvicorn orchestrator.server:app --port 8000            # host, as normal
+#   4. docker compose -f pomerium/docker-compose.pomerium.yml up
+#   5. open https://swarm.localhost.pomerium.io
+services:
+  pomerium:
+    image: pomerium/pomerium:latest
+    ports:
+      - "443:443"
+    volumes:
+      - ./config.yaml:/pomerium/config.yaml:ro
+      - ./certs:/pomerium/certs:ro
+    env_file:
+      - .env.pomerium
+    # Lets the container reach uvicorn running on the host (Docker Desktop
+    # provides host.docker.internal automatically; this line makes it work on
+    # Linux engines too).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

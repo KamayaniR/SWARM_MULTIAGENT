@@ -1,0 +1,53 @@
+# Pomerium config baked into the swarm-pomerium image (see Dockerfile).
+#
+# Role: zero-trust ingress in front of the internal sandbox agent on Akash.
+#
+#   Akash edge (TLS)  ──http:80──▶  Pomerium (this)  ──http──▶  agent:8080
+#
+# Akash's provider ingress terminates TLS at the edge and forwards plain HTTP to
+# the container, so Pomerium runs in insecure_server mode (no in-container TLS)
+# and describes the EXTERNAL https URL in `from` / authenticate_service_url.
+#
+# Secrets (SHARED_SECRET, COOKIE_SECRET) and IdP creds are NOT baked here — they
+# come from the SDL env (akash/deploy-sandbox-pomerium.yaml), so this file is
+# safe to commit.
+
+# Listen on :80; Akash edge sends us plain HTTP. Match `as: 80` in the SDL.
+address: ":80"
+insecure_server: true
+
+# ---------------------------------------------------------------------------
+# EXTERNAL hostname of THIS Pomerium ingress. Set to the Pomerium lease's Akash
+# ingress host (or a custom domain CNAME'd to it), then rebuild the image.
+# Tip: to avoid rebuilding when the host changes, override at deploy time via
+# the AUTHENTICATE_SERVICE_URL env in the SDL (env wins over this file).
+# ---------------------------------------------------------------------------
+authenticate_service_url: https://CHANGE_ME.ingress.cpu.aesservices.net
+
+routes:
+  - from: https://CHANGE_ME.ingress.cpu.aesservices.net
+    # Akash internal service DNS: the `agent` service, port 8080. Reachable only
+    # inside the deployment because agent exposes `to: - service: pomerium`.
+    to: http://agent:8080
+    # The agent is plain request/response (/inject, /run_tests, /reset).
+    allow_websocket_upgrade: false
+
+    # ----------------------------------------------------------------------
+    # AUTH POLICY — filled at the auth step (JWT service account or mTLS).
+    # Default below is FAIL-CLOSED: an empty policy denies every request, so
+    # the endpoint is never accidentally left open before auth is wired.
+    # ----------------------------------------------------------------------
+    policy: []
+
+    # >>> TEST ONLY — verify Pomerium->agent routing before auth is wired. <<<
+    # Uncomment to allow all UNAUTHENTICATED traffic through. This reopens the
+    # exact hole we're closing — use only for a throwaway plumbing test, then
+    # re-comment and replace `policy: []` above with the real identity rule:
+    #
+    # policy:
+    #   - allow:
+    #       and:
+    #         - user:
+    #             is: orchestrator@swarm.local   # the orchestrator service account
+    #
+    # allow_public_unauthenticated_access: true

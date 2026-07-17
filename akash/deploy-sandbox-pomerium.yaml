@@ -1,0 +1,92 @@
+---
+# SWARM sandbox agent on Akash, fronted by Pomerium (zero-trust ingress).
+#
+# Topology (one deployment, two services):
+#
+#   internet ──https:443──▶ pomerium (global) ──http──▶ agent (INTERNAL ONLY)
+#                              enforces caller identity      runs generated code
+#
+# vs the old deploy-sandbox.yaml where `agent` was `global: true` and the exec
+# endpoint sat on the public internet behind only a shared bearer token. Here
+# the agent is NOT global — the ONLY thing reachable from the internet is
+# Pomerium, which authenticates the orchestrator before anything hits /inject or
+# /run_tests.
+#
+# Deploy via Akash Console, then give the Pomerium ingress URI (not the agent's)
+# to SANDBOX_AKASH_URLS.
+version: "2.0"
+
+services:
+  agent:
+    image: himanishprakash23/swarm-sandbox-agent:latest
+    env:
+      # Kept as defense-in-depth BEHIND Pomerium. Pomerium is the primary gate;
+      # this token means a request must clear both layers. Rotate by redeploying.
+      - SANDBOX_AGENT_TOKEN=CHANGE_ME_ROTATE_THIS
+    expose:
+      - port: 8080
+        # NOT global. Reachable only by the pomerium service over Akash's
+        # internal mesh (hostname `agent`, i.e. http://agent:8080).
+        to:
+          - service: pomerium
+
+  pomerium:
+    image: himanishprakash23/swarm-pomerium:latest   # built from akash/pomerium/ (config baked in)
+    env:
+      # --- secrets (generate: head -c32 /dev/urandom | base64) ---------------
+      # Pomerium reads these directly from env (keys match its config schema),
+      # so they stay OUT of the baked config image.
+      - SHARED_SECRET=CHANGE_ME_BASE64_32B
+      - COOKIE_SECRET=CHANGE_ME_BASE64_32B
+      # --- public hostname of THIS Pomerium ingress --------------------------
+      # Set to the Akash-provided host (or a custom domain CNAME'd to the lease)
+      # once known. Must match the route `from` in akash/pomerium/config.yaml
+      # and the authenticate_service_url. See akash/pomerium/README.md.
+      - SANDBOX_PUBLIC_HOST=CHANGE_ME.provider.akash.network
+      # --- IdP for the machine-to-machine service account (filled at auth step)
+      # - IDP_PROVIDER=...
+      # - IDP_CLIENT_ID=...
+      # - IDP_CLIENT_SECRET=...
+    expose:
+      - port: 443
+        as: 443
+        to:
+          - global: true
+
+profiles:
+  compute:
+    agent:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 1Gi
+        storage:
+          size: 2Gi
+    pomerium:
+      resources:
+        cpu:
+          units: 0.25
+        memory:
+          size: 256Mi
+        storage:
+          size: 256Mi
+  placement:
+    dcloud:
+      pricing:
+        agent:
+          denom: uakt
+          amount: 10000
+        pomerium:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  agent:
+    dcloud:
+      profile: agent
+      count: 1
+  pomerium:
+    dcloud:
+      profile: pomerium
+      count: 1
