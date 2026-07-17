@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useRunHistory } from "../hooks/useRunHistory";
 import { deriveCriticScores, deriveRoutingSteps, deriveStages } from "../pipelineDerive";
 import type { CompletedFiles, RunStatus, TraceEvent } from "../types";
 import { AgentPipelineRow } from "./AgentPipelineRow";
@@ -21,6 +22,7 @@ export function CurrentRunPanel({ runId, startedAt, status, events }: Props) {
   const criticScores = useMemo(() => deriveCriticScores(events), [events]);
   const completedFiles: CompletedFiles =
     status?.status === "done" ? status.completed_files : {};
+  const history = useRunHistory(runId, status?.status === "done");
 
   if (runId === null) {
     return (
@@ -34,6 +36,12 @@ export function CurrentRunPanel({ runId, startedAt, status, events }: Props) {
     <div className="panel current-run-panel">
       <h2>Current run</h2>
       <RunStatusBanner status={status} startedAt={startedAt} />
+      {history && typeof history.accuracy === "number" && (
+        <div className="run-accuracy-badge" title="Real Critic score (0-10) of this run's winning solution">
+          <span className="run-accuracy-label">Solution quality</span>
+          <span className="run-accuracy-value">{history.accuracy.toFixed(1)}/10</span>
+        </div>
+      )}
       <AgentPipelineRow stages={stages} />
 
       <div className="current-run-grid">
@@ -47,7 +55,9 @@ export function CurrentRunPanel({ runId, startedAt, status, events }: Props) {
         </div>
       </div>
 
-      {status?.status === "done" && <OutputPanel completedFiles={completedFiles} />}
+      {status?.status === "done" && (
+        <OutputPanel completedFiles={completedFiles} runId={runId} />
+      )}
     </div>
   );
 }

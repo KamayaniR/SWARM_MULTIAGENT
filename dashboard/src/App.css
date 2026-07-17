@@ -322,6 +322,52 @@ body {
   margin-top: 16px;
 }
 
+.output-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.download-code-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.download-code-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.run-accuracy-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  width: fit-content;
+}
+
+.run-accuracy-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.run-accuracy-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #10b981;
+}
+
 .output-step {
   margin-bottom: 16px;
 }
@@ -663,7 +709,11 @@ button:disabled {
 
 .model-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  /* 190px (up from 140px) -- the previous width let the 3-column
+     calls/avg-per-call/pass-rate row get squeezed narrow enough that
+     values overflowed into each other (e.g. "$0.001" + "100%" rendering as
+     one unreadable "$0.001100%" blob) instead of wrapping cleanly. */
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -717,7 +767,7 @@ button:disabled {
 
 .model-card-row {
   display: flex;
-  gap: 14px;
+  gap: 10px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
@@ -725,16 +775,28 @@ button:disabled {
 .model-card-substat {
   display: flex;
   flex-direction: column;
+  /* Equal-width columns (not content-sized) -- so "calls"/"avg per
+     call"/"pass rate" line up at the same x-position on every card,
+     regardless of how many digits each value has. */
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .model-substat-value {
   font-size: 13px;
   font-weight: 600;
+  /* Truncate with an ellipsis instead of overflowing into the next
+     column's space (the actual cause of "$0.001" + "100%" rendering as
+     one run-together "$0.001100%" string on narrow cards). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .model-substat-label {
   font-size: 10px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .chart-grid {

@@ -49,12 +49,15 @@ export function ModelCards({ costPerModel, callsPerModel, accuracyPerModel }: Pr
                 <span className="model-substat-value">${avgCost.toFixed(3)}</span>
                 <span className="model-substat-label">avg/call</span>
               </div>
-              {accuracy !== undefined && (
-                <div className="model-card-substat">
-                  <span className="model-substat-value">{(accuracy * 100).toFixed(0)}%</span>
-                  <span className="model-substat-label">pass rate</span>
-                </div>
-              )}
+              {/* Always render this third column, even when accuracy is
+                  missing for this model -- otherwise cards with 2 vs 3
+                  columns don't line up with each other across the grid. */}
+              <div className="model-card-substat">
+                <span className="model-substat-value">
+                  {accuracy !== undefined ? `${(accuracy * 100).toFixed(0)}%` : "—"}
+                </span>
+                <span className="model-substat-label">pass rate</span>
+              </div>
             </div>
           </div>
         );

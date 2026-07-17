@@ -5,6 +5,16 @@ import { ModelCards } from "./ModelCards";
 const usd = (v: number | null) => (v === null || v === Infinity ? "—" : `$${v.toFixed(3)}`);
 const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
 
+// This backend leaves step_class as "" for calls that aren't tied to any
+// specific plan step (e.g. the Planner's own call) -- shown as a blank,
+// unlabeled bar otherwise. Relabeled here rather than filtered out, since
+// it's real cost and often one of the largest bars.
+function labelStepClasses(data: Record<string, number>): Record<string, number> {
+  if (!("" in data)) return data;
+  const { "": unclassified, ...rest } = data;
+  return { "(unclassified)": unclassified, ...rest };
+}
+
 interface Props {
   view: ViewMode;
   isCollective: boolean;
@@ -20,7 +30,7 @@ export function CostDashboard({ view, isCollective, collective, perRun }: Props)
   const perConverged = data.cost_per_converged_task;
   const costPerModel = data.cost_per_model;
   const callsPerModel = data.calls_per_model;
-  const costPerStepClass = data.cost_per_step_class;
+  const costPerStepClass = labelStepClasses(data.cost_per_step_class);
   const accuracyPerModel = isCollective ? (collective as CollectiveCosts).accuracy_per_model : null;
 
   return (

@@ -111,18 +111,36 @@ def run_to_completion(state: SwarmState | None, config: dict) -> SwarmState:
     Pass state=None to resume an already-started thread from its checkpoint
     (e.g. after /intervene) instead of starting a fresh run.
 
+    Stops immediately (does NOT keep looping) when status is
+    "awaiting_preference" -- this is Agent mode's comparison_gate pause, a
+    genuinely different kind of interrupt_after point from critic's: the
+    critic pause is fine to auto-resume through (nothing needs to happen
+    unless a human calls /intervene), but comparison_gate's pause requires
+    resolve_comparison() to run FIRST (it's what registers the run's
+    sandbox container and picks the winning candidate's files) -- without
+    this check, the loop below blindly resumed straight through
+    comparison_gate into tester_node with no container ever created,
+    crashing with a bare KeyError on the run_id. Reproduced and confirmed
+    via a direct run_to_completion() call before this fix.
+
     Always cleans up the run's sandbox container on the way out, whether
     the run finishes normally or raises (e.g. BudgetExceeded) — this is the
     only exit path from a run, so it's the right place for that cleanup.
     """
     run_id = config["configurable"]["thread_id"]
+    result: dict = {}
     try:
         result = graph.invoke(state, config=config)
-        while graph.get_state(config).next:
+        while graph.get_state(config).next and result.get("status") != "awaiting_preference":
             result = graph.invoke(None, config=config)
         return result
     finally:
-        cleanup_run(run_id)
+        # Don't tear down the container while genuinely paused awaiting a
+        # preference -- resolve_comparison() (called later, once an answer
+        # arrives) still needs it. A real exception (result never properly
+        # set) still cleans up, same as the original always-cleanup behavior.
+        if result.get("status") != "awaiting_preference":
+            cleanup_run(run_id)
 
 
 if __name__ == "__main__":

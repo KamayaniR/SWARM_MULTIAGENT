@@ -4,7 +4,6 @@ import type { ModelInfo } from "./types";
 // (config.py's ESCALATION_LADDER) -- purely cosmetic, never used for any
 // routing or cost logic, which all comes from the server.
 const KNOWN_MODELS: Record<string, ModelInfo> = {
-  "claude-haiku-4-5": { label: "Haiku", emoji: "⚡", color: "#10b981" },
   "claude-sonnet-5": { label: "Sonnet", emoji: "⚖️", color: "#6366f1" },
   "claude-opus-4-8": { label: "Opus", emoji: "🧠", color: "#f59e0b" },
 };

@@ -484,6 +484,10 @@ def critic_node(state: SwarmState) -> dict:
         )
 
     outcome = "pass" if step_passed else "fail"
+    # Every call already persisted for this step (Coder's, this Critic call
+    # included) had outcome=NULL when it was written -- the pass/fail is
+    # only known now. Rewrite them so accuracy_per_model() has real data.
+    _get_client().cost_tracker.update_outcome(step["id"], outcome, state["run_id"])
     event = _event(
         "critic", "verdict", state,
         step_id=step["id"], step_class=step["step_class"],

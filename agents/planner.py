@@ -25,11 +25,14 @@ PLAN_TOOL = {
                         "acceptance": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["id", "description", "step_class", "est_loc", "deps", "acceptance"],
+                    "additionalProperties": False,
                 },
             }
         },
         "required": ["steps"],
+        "additionalProperties": False,
     },
+    "strict": True,
 }
 
 
