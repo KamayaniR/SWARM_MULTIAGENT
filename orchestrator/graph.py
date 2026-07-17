@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 from orchestrator.loop import (
     cleanup_run,
     coder_node,
+    comparison_gate_node,
     critic_node,
     decide_next,
     planner_node,
@@ -20,13 +21,27 @@ graph_builder = StateGraph(SwarmState)
 graph_builder.add_node("planner", planner_node)
 graph_builder.add_node("router", router_node)
 graph_builder.add_node("coder", coder_node)
+graph_builder.add_node("comparison_gate", comparison_gate_node)
 graph_builder.add_node("tester", tester_node)
 graph_builder.add_node("critic", critic_node)
 
 graph_builder.set_entry_point("planner")
 graph_builder.add_edge("planner", "router")
 graph_builder.add_edge("router", "coder")
-graph_builder.add_edge("coder", "tester")
+
+
+def _decide_after_coder(state: SwarmState) -> str:
+    # Task mode's coder_node never sets this status, so it never routes
+    # through comparison_gate — only an agent-mode dual-candidate comparison
+    # (which just finished building both candidates and needs a preference
+    # before picking a winner) does.
+    return "await" if state["status"] == "awaiting_preference" else "continue"
+
+
+graph_builder.add_conditional_edges(
+    "coder", _decide_after_coder, {"await": "comparison_gate", "continue": "tester"},
+)
+graph_builder.add_edge("comparison_gate", "tester")
 graph_builder.add_edge("tester", "critic")
 
 graph_builder.add_conditional_edges(
@@ -48,7 +63,11 @@ checkpointer = SqliteSaver(_checkpoint_conn)
 
 # Pausing after every critic verdict gives /intervene a real point to inject
 # a correction via update_state() before the loop resumes to the next step.
-graph = graph_builder.compile(checkpointer=checkpointer, interrupt_after=["critic"])
+# Pausing after comparison_gate is the awaiting_preference pause — Agent
+# mode's dual-candidate comparison stops there until POST
+# /run/{run_id}/commit-preference answers, or the server's timeout watchdog
+# auto-applies the default rule.
+graph = graph_builder.compile(checkpointer=checkpointer, interrupt_after=["critic", "comparison_gate"])
 
 
 def _initial_state(

@@ -315,10 +315,12 @@ def coder_node(state: SwarmState) -> dict:
 
 def _comparison_coder(state: SwarmState, step: dict, candidates: list[str], feedback: str | None) -> dict:
     """Agent-mode dual-candidate path: build the step with BOTH candidate
-    models concurrently in isolated sandboxes, fully judge both, pick a winner
-    (user preference or default rule), and hand the winner's results forward
-    so tester_node/critic_node pass them through instead of re-running."""
-    run_id = state["run_id"]
+    models concurrently in isolated sandboxes, fully judge both, then PAUSE —
+    winner selection is deferred to whoever answers the preference (a person
+    via POST /run/{run_id}/commit-preference, or the timeout watchdog applying
+    the default rule). The graph is routed to comparison_gate next, which is
+    the interrupt point (see graph.py); resolve_comparison() in this module is
+    what actually picks the winner once an answer arrives."""
     new_events: list[dict] = []
 
     new_events.append(_event(
@@ -351,45 +353,70 @@ def _comparison_coder(state: SwarmState, step: dict, candidates: list[str], feed
                    + (f" — error: {r['error']}" if r["error"] else ""),
         ))
 
-    preference = state.get("model_preference")
-    winner = _select_winner(results, preference)
-    rule = preference or "default (highest accuracy, tie -> lowest cost)"
     new_events.append(_event(
-        "evaluator", "winner_selected", state,
-        step_id=step["id"], step_class=step["step_class"],
-        model=winner["model"], candidates=candidates,
-        critic_score=winner["critic_score"],
-        detail=f"selected {winner['model']} by {rule}",
+        "evaluator", "awaiting_preference", state,
+        step_id=step["id"], step_class=step["step_class"], candidates=candidates,
+        detail=f"both candidates finished — awaiting preference (cost/accuracy/latency) "
+               f"or auto-default after {PREFERENCE_TIMEOUT_SECONDS}s",
     ))
 
-    # The winner's files become the run's workspace; keep the main container
-    # in sync so later steps (and similarity-skip steps) test cumulatively.
+    # Kept in full (not stripped) — resolve_comparison() needs each
+    # candidate's test_results + verdict to hand the winner forward without
+    # re-running or re-judging.
+    return {
+        "candidate_models": [],
+        "candidate_results": results,
+        "status": "awaiting_preference",
+        "events": state["events"] + new_events,
+    }
+
+
+PREFERENCE_TIMEOUT_SECONDS = 120
+
+
+def comparison_gate_node(state: SwarmState) -> dict:
+    """No-op node. Its only purpose is to be the interrupt_after target for
+    the awaiting_preference pause (see graph.py) — pausing here, rather than
+    adding "coder" itself to interrupt_after, keeps Task mode's coder_node
+    calls from ever being affected: Task mode never routes through this node."""
+    return {}
+
+
+def resolve_comparison(state: SwarmState, dimension: str | None, auto: bool = False) -> dict:
+    """Resolve a paused agent-mode comparison: pick the winner by `dimension`
+    (None -> default rule), inject its files into the run's sandbox container,
+    and return the update that resumes the loop into tester_node's
+    pass-through branch. Called by POST /run/{run_id}/commit-preference and by
+    the timeout watchdog (auto=True) when nobody answers in time."""
+    step = _current_step(state)
+    results = state["candidate_results"]
+    winner = _select_winner(results, dimension)
+
     workspace_files = {**state["workspace_files"], **winner["files"]}
     sandbox = _get_sandbox()
+    run_id = state["run_id"]
     if run_id not in _containers:
         _containers[run_id] = sandbox.create()
     sandbox.inject_files(_containers[run_id], workspace_files)
 
-    # Strip non-serializable-ish bulk from candidate_results kept in state:
-    # keep the comparison table fields + files so the UI can offer the code.
-    candidate_results = [
-        {k: r[k] for k in (
-            "model", "provider", "files", "critic_score",
-            "tests_passed", "tests_total", "cost_usd", "latency_ms",
-            "passed", "error",
-        )}
-        for r in results
-    ]
+    rule = dimension or "default (highest accuracy, tie -> lowest cost)"
+    if auto:
+        rule += f" — auto-applied after {PREFERENCE_TIMEOUT_SECONDS}s with no response"
+    event = _event(
+        "evaluator", "winner_selected", state,
+        step_id=step["id"], step_class=step["step_class"],
+        model=winner["model"], candidates=[r["model"] for r in results],
+        critic_score=winner["critic_score"],
+        detail=f"selected {winner['model']} by {rule}",
+    )
 
     return {
         "workspace_files": workspace_files,
         "current_model": winner["model"],
-        "candidate_models": [],
-        "candidate_results": candidate_results,
         "test_results": winner["test_results"],
         "pending_verdict": winner["verdict"],
         "status": "testing",
-        "events": state["events"] + new_events,
+        "events": state["events"] + [event],
     }
 
 
