@@ -36,4 +36,5 @@ class SwarmState(TypedDict):
     routing_reason: Optional[str]
     run_id: str
     baseline_mode: bool         # True: bypass the router, always use gpt-5.5
+    debate_mode: bool           # True: pick each step's model via the two-agent debate router; False: single-shot nano classifier
     pending_correction: Optional[str]   # human correction injected via /intervene, consumed by the Planner

@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 MODEL_PRICES = {
     # Anthropic
     "claude-haiku-4-5": {"provider": "anthropic", "input": 1.00 / 1_000_000, "output": 5.00 / 1_000_000, "tier": 2},
+    "claude-sonnet-4-6": {"provider": "anthropic", "input": 3.00 / 1_000_000, "output": 15.00 / 1_000_000, "tier": 3},
     "claude-sonnet-5": {"provider": "anthropic", "input": 2.00 / 1_000_000, "output": 10.00 / 1_000_000, "tier": 3},
+    "claude-opus-4-6": {"provider": "anthropic", "input": 5.00 / 1_000_000, "output": 25.00 / 1_000_000, "tier": 4},
     "claude-opus-4-8": {"provider": "anthropic", "input": 5.00 / 1_000_000, "output": 25.00 / 1_000_000, "tier": 4},
 
     # OpenAI
@@ -20,20 +22,25 @@ MODEL_ALIASES = {
     "gpt-mini": "gpt-4.1-mini",
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-5",
+    "sonnet4.6": "claude-sonnet-4-6",
     "opus": "claude-opus-4-8",
+    "opus4.6": "claude-opus-4-6",
     "gpt5": "gpt-5",
     "gpt5.4": "gpt-5.4",
     "gpt5.5": "gpt-5.5",
 }
 
+# Sonnet 4.6 is the base worker for all tasks; Opus 4.6 is the premium model the
+# per-prompt bake-off escalates to when a step genuinely needs it.
 DIFFICULTY_TO_MODEL = {
-    "EASY": "gpt-4.1-mini",
-    "MEDIUM": "claude-haiku-4-5",
-    "HARD": "claude-sonnet-5",
+    "EASY": "claude-sonnet-4-6",
+    "MEDIUM": "claude-sonnet-4-6",
+    "HARD": "claude-opus-4-6",
 }
 
-# Ordered cheapest → most expensive, used for escalation when a tier fails.
-TIER_LADDER = ["gpt-4.1-mini", "claude-haiku-4-5", "claude-sonnet-5", "gpt-5.5"]
+# Ordered cheapest → most expensive, used for escalation when a tier fails and
+# as the candidate pool the debate/bake-off chooses between per prompt.
+TIER_LADDER = ["claude-sonnet-4-6", "claude-opus-4-6"]
 
 
 def resolve_model(name: str) -> str:

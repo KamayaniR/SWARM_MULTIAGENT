@@ -51,7 +51,12 @@ checkpointer = SqliteSaver(_checkpoint_conn)
 graph = graph_builder.compile(checkpointer=checkpointer, interrupt_after=["critic"])
 
 
-def _initial_state(spec: str, run_id: str | None = None, baseline_mode: bool = False) -> SwarmState:
+def _initial_state(
+    spec: str,
+    run_id: str | None = None,
+    baseline_mode: bool = False,
+    debate_mode: bool = True,
+) -> SwarmState:
     return SwarmState(
         spec=spec,
         plan=[],
@@ -67,6 +72,7 @@ def _initial_state(spec: str, run_id: str | None = None, baseline_mode: bool = F
         routing_reason=None,
         run_id=run_id or str(uuid.uuid4()),
         baseline_mode=baseline_mode,
+        debate_mode=debate_mode,
         pending_correction=None,
     )
 

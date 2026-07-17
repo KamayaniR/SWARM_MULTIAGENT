@@ -1,25 +1,28 @@
-import { AgentGrid } from "./components/AgentGrid";
-import { DecisionLog } from "./components/DecisionLog";
-import { useRunState } from "./hooks/useRunState";
+import { useState } from "react";
+import { AgentModeView } from "./components/AgentModeView";
+import { DailyUseView } from "./components/DailyUseView";
+import { ModeToggle, type Mode } from "./components/ModeToggle";
+
+const MODE_KEY = "swarm.mode";
 
 function App() {
-  const { events, latestByAgent, activeAgent, totalCostUsd, agents, usingMock } = useRunState();
+  const [mode, setMode] = useState<Mode>(
+    () => (localStorage.getItem(MODE_KEY) as Mode | null) ?? "agent",
+  );
+
+  function changeMode(next: Mode) {
+    setMode(next);
+    localStorage.setItem(MODE_KEY, next);
+  }
 
   return (
     <>
       <header className="app-header">
         <h1>Swarm Control</h1>
-        <span className="mode-badge">{usingMock ? "mock data" : "live"}</span>
+        <ModeToggle mode={mode} onChange={changeMode} />
       </header>
 
-      <div className="cost-area">
-        <span className="label">This run</span>
-        <span className="value">${totalCostUsd.toFixed(4)}</span>
-      </div>
-
-      <AgentGrid agents={agents} latestByAgent={latestByAgent} activeAgent={activeAgent} />
-
-      <DecisionLog events={events} />
+      {mode === "agent" ? <AgentModeView /> : <DailyUseView />}
     </>
   );
 }

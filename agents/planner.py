@@ -36,7 +36,7 @@ PLAN_TOOL = {
 def run_planner(client, spec: str, run_id: str) -> list[PlanStep]:
     """Call the Planner LLM and return a validated list of PlanSteps."""
     result, _metrics = client.call(
-        model="claude-sonnet-5",
+        model="claude-sonnet-4-6",
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": f"Spec:\n\n{spec}"}],
         tool=PLAN_TOOL,

@@ -60,7 +60,7 @@ def run_critic(
 ) -> CriticVerdict:
     """Call the Critic LLM and return a structured verdict."""
     v, _metrics = client.call(
-        model="claude-sonnet-5",
+        model="claude-sonnet-4-6",
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_message(spec, code, test_results)}],
         tool=VERDICT_TOOL,

@@ -4,6 +4,7 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from orchestrator.agent_mode import get_agent_run, run_agent_mode
 from orchestrator.events import emitter
 from orchestrator.graph import _initial_state, graph, run_to_completion
 from scheduler import router as router_module
@@ -24,6 +25,11 @@ _runs: dict[str, dict | None] = {}
 
 class RunRequest(BaseModel):
     spec: str
+    debate_mode: bool = True
+
+
+class AgentRunRequest(BaseModel):
+    spec: str
 
 
 class InterveneRequest(BaseModel):
@@ -41,8 +47,8 @@ def _config_for(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
 
 
-def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool) -> None:
-    state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode)
+def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = True) -> None:
+    state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode)
     try:
         _runs[run_id] = run_to_completion(state, _config_for(run_id))
     except Exception as e:
@@ -63,7 +69,7 @@ def _resume_loop_sync(run_id: str) -> None:
 async def start_run(req: RunRequest):
     run_id = str(uuid.uuid4())
     _runs[run_id] = None
-    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, False))
+    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, False, req.debate_mode))
     return {"run_id": run_id}
 
 
@@ -71,8 +77,25 @@ async def start_run(req: RunRequest):
 async def start_baseline_run(req: RunRequest):
     run_id = str(uuid.uuid4())
     _runs[run_id] = None
-    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, True))
+    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, True, req.debate_mode))
     return {"run_id": run_id}
+
+
+@app.post("/agent/run")
+async def start_agent_run(req: AgentRunRequest):
+    run_id = str(uuid.uuid4())
+    # run_agent_mode registers itself in _agent_runs (status "running") before
+    # doing any work, so GET /api/agent/{run_id} reports progress immediately.
+    asyncio.create_task(asyncio.to_thread(run_agent_mode, req.spec, run_id))
+    return {"run_id": run_id}
+
+
+@app.get("/api/agent/{run_id}")
+async def get_agent_result(run_id: str):
+    result = get_agent_run(run_id)
+    if result is None:
+        return {"run_id": run_id, "status": "not_found", "result": None}
+    return {"run_id": run_id, "status": result["status"], "result": result}
 
 
 @app.post("/scheduler/reset")
