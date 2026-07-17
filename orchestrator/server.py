@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from typing import Literal, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -7,7 +8,9 @@ from pydantic import BaseModel
 from orchestrator.agent_mode import get_agent_run, run_agent_mode
 from orchestrator.events import emitter
 from orchestrator.graph import _initial_state, graph, run_to_completion
+from orchestrator.loop import PREFERENCE_TIMEOUT_SECONDS, resolve_comparison
 from scheduler import router as router_module
+from scheduler import similarity as similarity_module
 from scheduler.cost_tracker import CostTracker
 from scheduler.trace_logger import TraceLogger
 
@@ -22,10 +25,21 @@ _trace_logger = TraceLogger()
 # run_id -> final SwarmState once the background run completes; None while running.
 _runs: dict[str, dict | None] = {}
 
+# run_ids whose awaiting_preference pause has already been resolved (by an
+# explicit commit-preference call or the timeout watchdog) — guards against
+# both firing for the same pause in a race.
+_preference_resolved: set[str] = set()
+
 
 class RunRequest(BaseModel):
     spec: str
     debate_mode: bool = False
+    # "task" = existing flow unchanged; "agent" = per-run deliberation flow
+    # (similarity check -> deliberation -> dual-candidate sandbox comparison).
+    mode: Literal["task", "agent"] = "task"
+    # Agent-mode winner selection: None -> default rule (highest accuracy,
+    # tie broken by lowest cost).
+    preference: Optional[Literal["cost", "latency", "accuracy"]] = None
 
 
 class AgentRunRequest(BaseModel):
@@ -38,6 +52,10 @@ class InterveneRequest(BaseModel):
     correction_text: str
 
 
+class CommitPreferenceRequest(BaseModel):
+    dimension: Literal["cost", "accuracy", "latency"]
+
+
 @app.on_event("startup")
 async def _bind_emitter_loop():
     emitter.bind_loop(asyncio.get_running_loop())
@@ -47,8 +65,14 @@ def _config_for(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
 
 
-def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = False) -> None:
-    state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode)
+def _run_loop_sync(
+    spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = False,
+    mode: str = "task", preference: str | None = None,
+) -> None:
+    state = _initial_state(
+        spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode,
+        mode=mode, model_preference=preference,
+    )
     try:
         _runs[run_id] = run_to_completion(state, _config_for(run_id))
     except Exception as e:
@@ -65,11 +89,53 @@ def _resume_loop_sync(run_id: str) -> None:
         _runs[run_id] = {"status": "error", "detail": str(e), "events": []}
 
 
+async def _run_and_watch(run_id: str, blocking_fn, *args) -> None:
+    """Run a blocking loop function in a thread, then check whether it
+    stopped because it's awaiting a preference — if so, arm the timeout
+    watchdog. Every background-task launch in this file goes through this
+    (not raw asyncio.to_thread) so a comparison pause is never missed,
+    however the run got to that point (fresh start, /intervene resume, or a
+    previous preference commit continuing into a later step's comparison)."""
+    await asyncio.to_thread(blocking_fn, *args)
+    final_state = _runs.get(run_id)
+    if final_state and final_state.get("status") == "awaiting_preference":
+        asyncio.create_task(_preference_timeout_watchdog(run_id))
+
+
+async def _preference_timeout_watchdog(run_id: str) -> None:
+    await asyncio.sleep(PREFERENCE_TIMEOUT_SECONDS)
+    _apply_preference_and_resume(run_id, dimension=None, auto=True)
+
+
+def _apply_preference_and_resume(run_id: str, dimension: str | None, auto: bool = False) -> bool:
+    """Resolve a paused comparison and resume the run. Returns False (no-op)
+    if the run isn't actually paused awaiting a preference right now — either
+    it already got resolved (explicit commit raced the timeout, or vice
+    versa) or the run_id doesn't exist. Guarded by _preference_resolved so
+    only one of {explicit commit, timeout} ever actually resumes a given
+    pause."""
+    if run_id in _preference_resolved:
+        return False
+    config = _config_for(run_id)
+    snapshot = graph.get_state(config)
+    if not snapshot.values or snapshot.values.get("status") != "awaiting_preference":
+        return False
+
+    _preference_resolved.add(run_id)
+    updates = resolve_comparison(snapshot.values, dimension, auto=auto)
+    graph.update_state(config, updates)
+    _runs[run_id] = None
+    asyncio.create_task(_run_and_watch(run_id, _resume_loop_sync, run_id))
+    return True
+
+
 @app.post("/run")
 async def start_run(req: RunRequest):
     run_id = str(uuid.uuid4())
     _runs[run_id] = None
-    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, False, req.debate_mode))
+    asyncio.create_task(_run_and_watch(
+        run_id, _run_loop_sync, req.spec, run_id, False, req.debate_mode, req.mode, req.preference,
+    ))
     return {"run_id": run_id}
 
 
@@ -77,8 +143,20 @@ async def start_run(req: RunRequest):
 async def start_baseline_run(req: RunRequest):
     run_id = str(uuid.uuid4())
     _runs[run_id] = None
-    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, True, req.debate_mode))
+    asyncio.create_task(_run_and_watch(run_id, _run_loop_sync, req.spec, run_id, True, req.debate_mode))
     return {"run_id": run_id}
+
+
+@app.post("/run/{run_id}/commit-preference")
+async def commit_preference(run_id: str, req: CommitPreferenceRequest):
+    ok = _apply_preference_and_resume(run_id, req.dimension)
+    if not ok:
+        return {
+            "status": "error",
+            "detail": "run is not currently awaiting a preference "
+                      "(already resolved, wrong run_id, or not paused there yet)",
+        }
+    return {"status": "resuming", "run_id": run_id, "dimension": req.dimension}
 
 
 @app.post("/agent/run")
@@ -100,7 +178,10 @@ async def get_agent_result(run_id: str):
 
 @app.post("/scheduler/reset")
 async def reset_scheduler():
+    # Clears both learned layers: routing pass-rate history AND the
+    # similarity cache — after a reset every mode starts cold again.
     router_module.reset()
+    similarity_module.reset()
     return {"status": "reset"}
 
 
@@ -155,7 +236,7 @@ async def intervene(req: InterveneRequest):
         "status": "planning",
     })
     _runs[req.run_id] = None
-    asyncio.create_task(asyncio.to_thread(_resume_loop_sync, req.run_id))
+    asyncio.create_task(_run_and_watch(req.run_id, _resume_loop_sync, req.run_id))
     return {"status": "resuming", "run_id": req.run_id}
 
 

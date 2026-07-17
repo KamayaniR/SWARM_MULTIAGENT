@@ -8,6 +8,7 @@ const AGENT_LABELS: Record<Agent, string> = {
   critic: "Critic",
   team_planner: "Team Planner",
   evaluator: "Evaluator",
+  debate: "Debate",
 };
 
 const AGENT_COLOR_VAR: Record<Agent, string> = {
@@ -18,6 +19,7 @@ const AGENT_COLOR_VAR: Record<Agent, string> = {
   critic: "--agent-critic",
   team_planner: "--agent-planner",
   evaluator: "--agent-critic",
+  debate: "--agent-router",
 };
 
 function statusText(event: SwarmEvent | undefined): string {

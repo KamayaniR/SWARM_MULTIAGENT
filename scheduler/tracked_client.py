@@ -128,6 +128,37 @@ class TrackedLLMClient:
         }
         return result, metrics
 
+    def embed(
+        self,
+        *,
+        text: str,
+        run_id: str,
+        agent: str = "router",
+        step_id: str = "",
+        step_class: str = "",
+        model: str = "text-embedding-3-small",
+    ) -> list[float]:
+        """Embed one text and return its vector. Recorded to the cost tracker
+        like any other call (embeddings are cheap but not free), but not to the
+        trace log — a 1536-float vector isn't useful trace content."""
+        resolved = resolve_model(model)
+        provider = get_provider(resolved)
+
+        start = time.monotonic()
+        response = self.openai_client.embeddings.create(model=resolved, input=text)
+        latency_ms = (time.monotonic() - start) * 1000
+
+        input_tokens = response.usage.prompt_tokens
+        cost_usd = compute_cost(resolved, input_tokens, 0)
+        self.cost_tracker.record(CallRecord(
+            run_id=run_id, step_id=step_id, step_class=step_class, agent=agent,
+            model=resolved, provider=provider, input_tokens=input_tokens,
+            output_tokens=0, cost_usd=cost_usd, latency_ms=latency_ms,
+            iteration=0,
+        ))
+        self.latency_tracker.record(run_id, agent, resolved, latency_ms)
+        return response.data[0].embedding
+
 
 if __name__ == "__main__":
     # Exercises the recording pipeline without hitting a real API —

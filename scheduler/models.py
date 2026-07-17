@@ -15,6 +15,9 @@ MODEL_PRICES = {
     "gpt-5": {"provider": "openai", "input": 1.25 / 1_000_000, "output": 10.00 / 1_000_000, "tier": 2},
     "gpt-5.4": {"provider": "openai", "input": 2.50 / 1_000_000, "output": 15.00 / 1_000_000, "tier": 3},
     "gpt-5.5": {"provider": "openai", "input": 5.00 / 1_000_000, "output": 30.00 / 1_000_000, "tier": 4},
+
+    # Embeddings (similarity-skip layer) — output price is 0: embeddings have no output tokens
+    "text-embedding-3-small": {"provider": "openai", "input": 0.02 / 1_000_000, "output": 0.0, "tier": 0},
 }
 
 MODEL_ALIASES = {
@@ -47,6 +50,18 @@ TIER_LADDER = ["gpt-4.1-mini", "claude-haiku-4-5", "claude-sonnet-5", "gpt-5.5"]
 # stays to two genuinely strong models rather than spanning Daily Task's
 # cheap-to-expensive spread.
 AGENT_MODE_TIER_LADDER = ["claude-sonnet-4-6", "claude-opus-4-6"]
+
+# The five execution candidates the Agent-mode deliberation (Planner voice +
+# Debate voice + Opus judge, scheduler/deliberation.py) chooses between,
+# cheapest first. GPT-5 and GPT-4.1 mini are execution candidates only — they
+# never speak in the deliberation itself.
+DELIBERATION_MODEL_POOL = [
+    "gpt-4.1-mini",
+    "gpt-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-opus-4-8",
+]
 
 
 def resolve_model(name: str) -> str:
