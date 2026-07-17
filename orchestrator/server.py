@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from typing import Literal, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from orchestrator.agent_mode import get_agent_run, run_agent_mode
 from orchestrator.events import emitter
 from orchestrator.graph import _initial_state, graph, run_to_completion
 from scheduler import router as router_module
+from scheduler import similarity as similarity_module
 from scheduler.cost_tracker import CostTracker
 from scheduler.trace_logger import TraceLogger
 
@@ -26,6 +28,12 @@ _runs: dict[str, dict | None] = {}
 class RunRequest(BaseModel):
     spec: str
     debate_mode: bool = False
+    # "task" = existing flow unchanged; "agent" = per-run deliberation flow
+    # (similarity check -> deliberation -> dual-candidate sandbox comparison).
+    mode: Literal["task", "agent"] = "task"
+    # Agent-mode winner selection: None -> default rule (highest accuracy,
+    # tie broken by lowest cost).
+    preference: Optional[Literal["cost", "latency", "accuracy"]] = None
 
 
 class AgentRunRequest(BaseModel):
@@ -47,8 +55,14 @@ def _config_for(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
 
 
-def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = False) -> None:
-    state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode)
+def _run_loop_sync(
+    spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = False,
+    mode: str = "task", preference: str | None = None,
+) -> None:
+    state = _initial_state(
+        spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode,
+        mode=mode, model_preference=preference,
+    )
     try:
         _runs[run_id] = run_to_completion(state, _config_for(run_id))
     except Exception as e:
@@ -69,7 +83,9 @@ def _resume_loop_sync(run_id: str) -> None:
 async def start_run(req: RunRequest):
     run_id = str(uuid.uuid4())
     _runs[run_id] = None
-    asyncio.create_task(asyncio.to_thread(_run_loop_sync, req.spec, run_id, False, req.debate_mode))
+    asyncio.create_task(asyncio.to_thread(
+        _run_loop_sync, req.spec, run_id, False, req.debate_mode, req.mode, req.preference,
+    ))
     return {"run_id": run_id}
 
 
@@ -100,7 +116,10 @@ async def get_agent_result(run_id: str):
 
 @app.post("/scheduler/reset")
 async def reset_scheduler():
+    # Clears both learned layers: routing pass-rate history AND the
+    # similarity cache — after a reset every mode starts cold again.
     router_module.reset()
+    similarity_module.reset()
     return {"status": "reset"}
 
 

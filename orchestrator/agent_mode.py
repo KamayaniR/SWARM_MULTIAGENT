@@ -89,6 +89,9 @@ def _emit(run_id: str, agent: str, action: str, **fields) -> None:
         "critic_score": None,
         "tests_passed": None,
         "tests_total": None,
+        "candidates": None,
+        "similarity_score": None,
+        "matched_step_id": None,
         "detail": "",
         **fields,
     }

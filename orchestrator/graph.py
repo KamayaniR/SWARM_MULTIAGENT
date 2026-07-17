@@ -56,6 +56,8 @@ def _initial_state(
     run_id: str | None = None,
     baseline_mode: bool = False,
     debate_mode: bool = False,
+    mode: str = "task",
+    model_preference: str | None = None,
 ) -> SwarmState:
     return SwarmState(
         spec=spec,
@@ -74,6 +76,13 @@ def _initial_state(
         baseline_mode=baseline_mode,
         debate_mode=debate_mode,
         pending_correction=None,
+        mode=mode,
+        model_preference=model_preference,
+        debate_transcript=[],
+        candidate_models=[],
+        candidate_results=[],
+        similarity_match=None,
+        pending_verdict=None,
     )
 
 
