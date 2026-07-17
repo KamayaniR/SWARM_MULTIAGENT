@@ -17,7 +17,7 @@ unrelated step types (shared vocabulary, different work) don't false-match.
 
 SIMILARITY_THRESHOLD is a placeholder pending a calibration pass (hand-build
 ~15-20 true-rephrasing vs similar-but-different step pairs, embed them, and set
-the threshold where the score gap actually falls) — do not treat 0.85 as tuned.
+the threshold where the score gap actually falls) — do not treat 0.60 as tuned.
 """
 
 import json
@@ -30,7 +30,7 @@ from typing import Optional
 DB_PATH = Path(__file__).parent.parent / "data" / "similarity.db"
 
 # Placeholder — calibrate against real step pairs before trusting it (see module docstring).
-SIMILARITY_THRESHOLD = 0.85
+SIMILARITY_THRESHOLD = 0.60
 
 EMBED_MODEL = "text-embedding-3-small"
 
