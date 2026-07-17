@@ -30,17 +30,23 @@ MODEL_ALIASES = {
     "gpt5.5": "gpt-5.5",
 }
 
-# Sonnet 4.6 is the base worker for all tasks; Opus 4.6 is the premium model the
-# per-prompt bake-off escalates to when a step genuinely needs it.
+# Daily Task's classic (non-debate) router: nano-classified difficulty maps
+# straight to a tier, spanning cheap-OpenAI through mid-Anthropic.
 DIFFICULTY_TO_MODEL = {
-    "EASY": "claude-sonnet-4-6",
-    "MEDIUM": "claude-sonnet-4-6",
-    "HARD": "claude-opus-4-6",
+    "EASY": "gpt-4.1-mini",
+    "MEDIUM": "claude-haiku-4-5",
+    "HARD": "claude-sonnet-5",
 }
 
-# Ordered cheapest → most expensive, used for escalation when a tier fails and
-# as the candidate pool the debate/bake-off chooses between per prompt.
-TIER_LADDER = ["claude-sonnet-4-6", "claude-opus-4-6"]
+# Daily Task's escalation ladder, cheapest -> most expensive, used when a tier
+# fails and by the history-override mechanism in scheduler/router.py.
+TIER_LADDER = ["gpt-4.1-mini", "claude-haiku-4-5", "claude-sonnet-5", "gpt-5.5"]
+
+# Agent Mode's bake-off pool — separate from Daily Task's TIER_LADDER on
+# purpose. Agent Mode spins up a full sandbox per candidate, so its bake-off
+# stays to two genuinely strong models rather than spanning Daily Task's
+# cheap-to-expensive spread.
+AGENT_MODE_TIER_LADDER = ["claude-sonnet-4-6", "claude-opus-4-6"]
 
 
 def resolve_model(name: str) -> str:

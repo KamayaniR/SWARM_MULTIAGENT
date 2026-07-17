@@ -31,9 +31,9 @@ DEBATE_MODEL = "claude-opus-4-6"
 MAX_TURNS = 4  # advocate, skeptic, advocate, skeptic
 
 
-def _tier_menu() -> str:
+def _tier_menu(tier_ladder: list[str]) -> str:
     lines = []
-    for model in TIER_LADDER:
+    for model in tier_ladder:
         p = MODEL_PRICES[model]
         lines.append(
             f"  - {model} (tier {p['tier']}, ${p['input'] * 1_000_000:.2f}/"
@@ -42,9 +42,9 @@ def _tier_menu() -> str:
     return "\n".join(lines)
 
 
-def _history_evidence(step_class: str) -> str:
+def _history_evidence(step_class: str, tier_ladder: list[str]) -> str:
     lines = []
-    for model in TIER_LADDER:
+    for model in tier_ladder:
         stats = router._stats(step_class, model)
         if stats["total_attempts"]:
             lines.append(
@@ -82,37 +82,38 @@ money for no benefit. When the advocate's cheaper choice is genuinely safe,
 ACCEPT it. A good skeptic knows when to stop arguing."""
 
 
-DEBATE_TOOL = {
-    "name": "debate_turn",
-    "description": "Take your turn in the model-routing debate.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "accept": {
-                "type": "boolean",
-                "description": "true to accept the proposal currently on the table (ends the debate). Ignored if there is no proposal yet.",
+def _debate_tool(tier_ladder: list[str]) -> dict:
+    return {
+        "name": "debate_turn",
+        "description": "Take your turn in the model-routing debate.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "accept": {
+                    "type": "boolean",
+                    "description": "true to accept the proposal currently on the table (ends the debate). Ignored if there is no proposal yet.",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": list(tier_ladder),
+                    "description": "The model you propose (or the one you are accepting).",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "One sentence: why this model for this step.",
+                },
             },
-            "model": {
-                "type": "string",
-                "enum": list(TIER_LADDER),
-                "description": "The model you propose (or the one you are accepting).",
-            },
-            "rationale": {
-                "type": "string",
-                "description": "One sentence: why this model for this step.",
-            },
+            "required": ["accept", "model", "rationale"],
         },
-        "required": ["accept", "model", "rationale"],
-    },
-}
+    }
 
 
-def _context(step_description: str, step_class: str) -> str:
+def _context(step_description: str, step_class: str, tier_ladder: list[str]) -> str:
     return (
         f"Step to implement: {step_description}\n"
         f"Step class: {step_class}\n\n"
-        f"Available models (cheapest first):\n{_tier_menu()}\n\n"
-        f"History for '{step_class}':\n{_history_evidence(step_class)}"
+        f"Available models (cheapest first):\n{_tier_menu(tier_ladder)}\n\n"
+        f"History for '{step_class}':\n{_history_evidence(step_class, tier_ladder)}"
     )
 
 
@@ -127,7 +128,10 @@ def _transcript_text(transcript: list[dict], current: str | None) -> str:
     return "\n".join(lines)
 
 
-def _ask(client, speaker: str, context: str, transcript: list[dict], current: str | None, run_id: str) -> dict:
+def _ask(
+    client, speaker: str, context: str, transcript: list[dict], current: str | None,
+    run_id: str, tier_ladder: list[str],
+) -> dict:
     system = ADVOCATE_SYSTEM if speaker == "advocate" else SKEPTIC_SYSTEM
     user = (
         f"{context}\n\n"
@@ -138,7 +142,7 @@ def _ask(client, speaker: str, context: str, transcript: list[dict], current: st
         model=DEBATE_MODEL,
         system=system,
         messages=[{"role": "user", "content": user}],
-        tool=DEBATE_TOOL,
+        tool=_debate_tool(tier_ladder),
         run_id=run_id,
         agent="router",
         max_tokens=200,
@@ -146,19 +150,26 @@ def _ask(client, speaker: str, context: str, transcript: list[dict], current: st
     return result
 
 
-def route_debate(client, step_description: str, step_class: str, run_id: str) -> tuple[str, str, list[dict]]:
+def route_debate(
+    client, step_description: str, step_class: str, run_id: str,
+    tier_ladder: list[str] = TIER_LADDER,
+) -> tuple[str, str, list[dict]]:
     """Run the two-agent debate and return (model, reason, transcript).
 
     transcript is a list of {speaker, accepted, proposal, rationale} dicts,
     one per turn, so callers can surface the back-and-forth in the UI.
+
+    tier_ladder defaults to Daily Task's full cheap-to-expensive TIER_LADDER;
+    Agent Mode passes its own AGENT_MODE_TIER_LADDER instead (see
+    scheduler/team.py) so the two features never share a candidate pool.
     """
-    context = _context(step_description, step_class)
+    context = _context(step_description, step_class, tier_ladder)
     transcript: list[dict] = []
     current: str | None = None
 
     for turn in range(MAX_TURNS):
         speaker = "advocate" if turn % 2 == 0 else "skeptic"
-        result = _ask(client, speaker, context, transcript, current, run_id)
+        result = _ask(client, speaker, context, transcript, current, run_id, tier_ladder)
         proposal = resolve_model(result["model"])
         # "accept" only means something once there's a standing proposal.
         accepted = bool(result["accept"]) and current is not None

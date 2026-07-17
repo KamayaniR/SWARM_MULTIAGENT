@@ -103,7 +103,7 @@ def router_node(state: SwarmState) -> dict:
     if state.get("baseline_mode"):
         model = resolve_model("gpt-5.5")
         reason = "baseline mode: always gpt-5.5"
-    elif state.get("debate_mode", True):
+    elif state.get("debate_mode", False):
         model, reason, transcript = debate.route_debate(
             _get_client(), step["description"], step["step_class"], state["run_id"]
         )

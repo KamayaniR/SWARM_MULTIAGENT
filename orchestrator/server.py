@@ -25,7 +25,7 @@ _runs: dict[str, dict | None] = {}
 
 class RunRequest(BaseModel):
     spec: str
-    debate_mode: bool = True
+    debate_mode: bool = False
 
 
 class AgentRunRequest(BaseModel):
@@ -47,7 +47,7 @@ def _config_for(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}, "recursion_limit": 100}
 
 
-def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = True) -> None:
+def _run_loop_sync(spec: str, run_id: str, baseline_mode: bool, debate_mode: bool = False) -> None:
     state = _initial_state(spec, run_id=run_id, baseline_mode=baseline_mode, debate_mode=debate_mode)
     try:
         _runs[run_id] = run_to_completion(state, _config_for(run_id))

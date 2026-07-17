@@ -160,22 +160,22 @@ if __name__ == "__main__":
     client = FakeClient("HARD")
     model, reason = route(client, "implement dedup algorithm", "algorithm", "test-run")
     print(model, "|", reason)
-    assert model == "claude-opus-4-6"
+    assert model == "claude-sonnet-5"
     assert "nano classified as HARD" in reason
 
-    print("\n--- history override: base model proven to pass this step_class ---")
+    print("\n--- history override: cheap tier proven to pass this step_class ---")
     for _ in range(5):
-        record_outcome("algorithm", "claude-sonnet-4-6", passed=True, critic_score=9.0)
+        record_outcome("algorithm", "gpt-4.1-mini", passed=True, critic_score=9.0)
     model, reason = route(client, "implement dedup algorithm", "algorithm", "test-run")
     print(model, "|", reason)
-    assert model == "claude-sonnet-4-6"
+    assert model == "gpt-4.1-mini"
     assert "history shows" in reason
 
     print("\n--- reset: history cleared, nano trusted again ---")
     reset()
     model, reason = route(client, "implement dedup algorithm", "algorithm", "test-run")
     print(model, "|", reason)
-    assert model == "claude-opus-4-6"
+    assert model == "claude-sonnet-5"
     assert "nano classified as HARD" in reason
 
     os.remove(DB_PATH)
