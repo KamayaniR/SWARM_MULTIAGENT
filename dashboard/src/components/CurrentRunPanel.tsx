@@ -47,7 +47,9 @@ export function CurrentRunPanel({ runId, startedAt, status, events }: Props) {
         </div>
       </div>
 
-      {status?.status === "done" && <OutputPanel completedFiles={completedFiles} />}
+      {status?.status === "done" && (
+        <OutputPanel completedFiles={completedFiles} runId={runId} />
+      )}
     </div>
   );
 }

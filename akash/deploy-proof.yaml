@@ -1,0 +1,38 @@
+---
+# Minimal proof-of-path SDL: deploy a STOCK public nginx image on Akash and
+# confirm it's reachable over the internet (HTTP 200 on /). This isolates
+# "does Akash deploy + route to a live container" from our custom sandbox
+# image. Once this is green we swap `image` for our sandbox-agent image.
+version: "2.0"
+
+services:
+  web:
+    image: nginx:1.27
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.25
+        memory:
+          size: 256Mi
+        storage:
+          size: 256Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1

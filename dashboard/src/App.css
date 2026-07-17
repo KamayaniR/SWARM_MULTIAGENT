@@ -322,6 +322,30 @@ body {
   margin-top: 16px;
 }
 
+.output-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Download-all-code link, styled to sit next to the Output heading. */
+.download-code-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 5px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.download-code-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .output-step {
   margin-bottom: 16px;
 }

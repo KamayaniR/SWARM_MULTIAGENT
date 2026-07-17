@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { CompletedFiles } from "../types";
+import { DownloadCodeButton } from "./DownloadCodeButton";
 
 interface Props {
   completedFiles: CompletedFiles;
+  runId: string | null;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -21,7 +23,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function OutputPanel({ completedFiles }: Props) {
+export function OutputPanel({ completedFiles, runId }: Props) {
   const stepIds = Object.keys(completedFiles);
 
   if (stepIds.length === 0) {
@@ -35,7 +37,10 @@ export function OutputPanel({ completedFiles }: Props) {
 
   return (
     <div className="panel output-panel">
-      <h2>Output -- generated code</h2>
+      <div className="output-panel-header">
+        <h2>Output -- generated code</h2>
+        {runId && <DownloadCodeButton runId={runId} />}
+      </div>
       {stepIds.map((stepId) => (
         <div key={stepId} className="output-step">
           <div className="output-step-header">{stepId}</div>
