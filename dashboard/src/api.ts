@@ -42,11 +42,8 @@ export function intervene(run_id: string, correction_text: string): Promise<{ st
 // Models hidden from the dashboard's *display* only -- the real cost/call
 // data for these still exists in the backend's DB and still counts toward
 // total_usd (a true total), it's just excluded from the per-model
-// breakdown/cards/accuracy/latency views shown here. Per explicit request:
-// claude-haiku-4-5 was genuinely used (Task mode's MEDIUM-difficulty
-// routing) and has real recorded cost, but is deliberately not surfaced in
-// this dashboard's per-model views.
-const HIDDEN_MODELS = new Set(["claude-haiku-4-5"]);
+// breakdown/cards/accuracy/latency views shown here. Per explicit request.
+const HIDDEN_MODELS = new Set(["claude-haiku-4-5", "claude-sonnet-5"]);
 
 // This backend's /api/costs* endpoints return a per-model `breakdown` array
 // (verified: [{model, provider, calls, cost_usd, input_tokens, output_tokens}])
@@ -138,6 +135,24 @@ export function getTraces(runId: string): Promise<{ run_id: string; entries: Tra
   return json(`/api/traces/${runId}`);
 }
 
+// /api/traces/{id} (above) returns raw per-LLM-call records (system prompt,
+// messages, response, tokens) with no `action`/`critic_score`/`outcome`
+// fields at all -- verified against a real run's actual response. The
+// semantic node-level events pipelineDerive.ts needs (action: "classify"/
+// "run_tests"/"verdict", critic_score, outcome, tests_passed) only exist in
+// /api/runs/{id}'s own `events` field (the SwarmState's event list). This is
+// what the pipeline view (agent stages, routing decisions, critic scores)
+// must poll -- using getTraces() there was the actual bug that made Tester/
+// routing/critic scores look stuck even on a genuinely completed run.
+export async function getRunEvents(runId: string): Promise<TraceEvent[]> {
+  const raw = await json<RawRunStatus>(`/api/runs/${runId}`);
+  return raw.events ?? [];
+}
+
 export function getRunHistory(runId: string): Promise<RunHistoryRecord> {
   return json(`/api/runs/${runId}/history`);
+}
+
+export function listRunHistory(): Promise<{ runs: RunHistoryRecord[] }> {
+  return json("/api/runs");
 }

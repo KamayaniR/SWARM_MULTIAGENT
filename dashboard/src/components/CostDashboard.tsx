@@ -1,3 +1,4 @@
+import { useRunHistory } from "../hooks/useRunHistory";
 import type { CollectiveCosts, RunCosts, ViewMode } from "../types";
 import { BarBreakdown } from "./BarBreakdown";
 import { ModelCards } from "./ModelCards";
@@ -20,10 +21,17 @@ interface Props {
   isCollective: boolean;
   collective: CollectiveCosts | null;
   perRun: RunCosts | null;
+  selectedRun: string | null;
 }
 
-export function CostDashboard({ view, isCollective, collective, perRun }: Props) {
+export function CostDashboard({ view, isCollective, collective, perRun, selectedRun }: Props) {
   const data = isCollective ? collective : perRun;
+  // Real Critic score (0-10) of the winning solution for whichever run is
+  // selected -- sourced from orchestrator/artifacts.py's run_history table,
+  // not tied to a live/active-session run, so it's visible for any
+  // historical run the user picks from the Scope selector too.
+  const history = useRunHistory(selectedRun, !isCollective);
+
   if (!data) return <p className="empty-note">Loading...</p>;
 
   const totalUsd = data.total_usd;
@@ -44,6 +52,12 @@ export function CostDashboard({ view, isCollective, collective, perRun }: Props)
           <span className="headline-label">Cost / converged task</span>
           <span className="headline-value">{usd(perConverged)}</span>
         </div>
+        {!isCollective && history && typeof history.accuracy === "number" && (
+          <div className="headline-stat">
+            <span className="headline-label">Solution quality (Critic score)</span>
+            <span className="headline-value">{history.accuracy.toFixed(1)}/10</span>
+          </div>
+        )}
       </div>
 
       <ModelCards costPerModel={costPerModel} callsPerModel={callsPerModel} accuracyPerModel={accuracyPerModel} />

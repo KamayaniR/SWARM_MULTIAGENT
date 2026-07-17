@@ -5,7 +5,9 @@ import type { ModelInfo } from "./types";
 // routing or cost logic, which all comes from the server.
 const KNOWN_MODELS: Record<string, ModelInfo> = {
   "claude-sonnet-5": { label: "Sonnet", emoji: "⚖️", color: "#6366f1" },
-  "claude-opus-4-8": { label: "Opus", emoji: "🧠", color: "#f59e0b" },
+  "claude-sonnet-4-6": { label: "Sonnet 4.6", emoji: "⚖️", color: "#818cf8" },
+  "claude-opus-4-8": { label: "Opus 4.8", emoji: "🧠", color: "#f59e0b" },
+  "claude-opus-4-6": { label: "Opus 4.6", emoji: "🧠", color: "#fb923c" },
 };
 
 const FALLBACK_COLORS = ["#ec4899", "#14b8a6", "#8b5cf6", "#f97316"];

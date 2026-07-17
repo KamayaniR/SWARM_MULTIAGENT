@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
+import { listRunHistory } from "./api";
 import { CostDashboard } from "./components/CostDashboard";
 import { CurrentRunPanel } from "./components/CurrentRunPanel";
 import { EventFeed } from "./components/EventFeed";
@@ -34,6 +35,38 @@ export default function App() {
   }, []);
 
   const { events, connected } = useLiveEvents(bumpRefresh);
+
+  // Seed the run selector with real persisted history (orchestrator/
+  // artifacts.py's run_history table) on mount -- otherwise only runs
+  // submitted live in this exact browser session are selectable, and
+  // historical accuracy/cost data becomes unreachable after a page reload.
+  useEffect(() => {
+    listRunHistory()
+      .then(({ runs }) => {
+        setSeenRunIds((prev) => {
+          const ids = runs.map((r) => r.run_id);
+          const merged = [...prev];
+          for (const id of ids) if (!merged.includes(id)) merged.push(id);
+          return merged;
+        });
+        setRecentPrompts((prev) => {
+          const known = new Set(prev.map((p) => p.run_id));
+          const historical: RecentPrompt[] = runs
+            .filter((r) => !known.has(r.run_id))
+            .map((r) => ({
+              run_id: r.run_id,
+              spec: r.prompt ?? "",
+              submitted_at: r.created_at ? new Date(r.created_at).getTime() : 0,
+            }));
+          return [...prev, ...historical]
+            .sort((a, b) => b.submitted_at - a.submitted_at)
+            .slice(0, MAX_RECENT_PROMPTS);
+        });
+      })
+      .catch(() => {
+        // Non-fatal -- the dashboard still works from live session data alone.
+      });
+  }, []);
 
   const isCollective = selectedRun === null;
   const effectiveView = useMemo<ViewMode>(
@@ -90,7 +123,13 @@ export default function App() {
             <RunSelector runIds={seenRunIds} selected={selectedRun} onChange={setSelectedRun} />
             <ViewToggle view={effectiveView} onChange={setView} isCollective={isCollective} />
           </div>
-          <CostDashboard view={effectiveView} isCollective={isCollective} collective={collective} perRun={perRun} />
+          <CostDashboard
+            view={effectiveView}
+            isCollective={isCollective}
+            collective={collective}
+            perRun={perRun}
+            selectedRun={selectedRun}
+          />
         </div>
       </main>
     </div>
