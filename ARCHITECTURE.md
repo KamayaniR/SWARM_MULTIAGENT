@@ -11,97 +11,97 @@ swarm-control/
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
-├── docker-compose.yml
-├── Makefile
+├── test_loop.py                       # Manual smoke test: Task mode end-to-end
+├── test_agent_mode.py                 # Manual smoke test: Agent mode bake-off
 │
-├── agents/                            # Track A: core agents
+├── agents/                            # Core agents (shared by both modes)
 │   ├── __init__.py
-│   ├── planner.py                     # Spec → typed steps
-│   ├── coder.py                       # Step → code in sandbox
-│   ├── critic.py                      # LLM-as-judge verdicts
+│   ├── planner.py                     # Spec → typed steps (claude-sonnet-4-6)
+│   ├── coder.py                       # Step → code in sandbox (routed model)
+│   ├── critic.py                      # LLM-as-judge verdicts (claude-sonnet-4-6)
+│   ├── team_planner.py                # Agent mode: spec → agent roles (claude-sonnet-4-6)
 │   └── prompts/
 │       ├── planner_system.md
 │       ├── coder_system.md
-│       └── critic_system.md
+│       ├── critic_system.md
+│       └── team_planner_system.md
 │
-├── scheduler/                         # Track B: routing + instrumentation
+├── scheduler/                         # Routing + instrumentation
 │   ├── __init__.py
-│   ├── models.py                      # MODEL_PRICES, TIER_LADDER, CallRecord
-│   ├── router.py                      # Hybrid LLM + history router
-│   ├── cost_tracker.py                # SQLite cost aggregation
-│   ├── latency_tracker.py             # Timing stats
+│   ├── models.py                      # MODEL_PRICES, TIER_LADDER, DELIBERATION_MODEL_POOL, CallRecord
+│   ├── router.py                      # Task mode: hybrid LLM + history router
+│   ├── debate.py                      # Cost-Advocate-vs-Quality-Skeptic debate (Task mode's optional debate_mode)
+│   ├── deliberation.py                # Agent mode: Planner voice + Debate voice + Judge → 2 candidates
+│   ├── similarity.py                  # Agent mode: embedding-based similarity-skip cache
+│   ├── team.py                        # Old Agent Mode (team bake-off): candidate selection
+│   ├── cost_tracker.py                # SQLite cost + latency aggregation
+│   ├── latency_tracker.py             # In-memory timing stats
 │   ├── trace_logger.py                # JSONL audit trail
-│   ├── tracked_client.py             # Multi-provider LLM wrapper
+│   ├── tracked_client.py              # Multi-provider LLM wrapper + embed()
 │   └── budget_guard.py                # Spend circuit breaker
 │
 ├── orchestrator/                      # Orchestration: state machine + API
 │   ├── __init__.py
-│   ├── state.py                       # SwarmState TypedDict
-│   ├── graph.py                       # LangGraph StateGraph
-│   ├── loop.py                        # Node functions
-│   ├── server.py                      # FastAPI + WebSocket + REST
-│   └── events.py                      # Event emitter
+│   ├── state.py                       # SwarmState TypedDict (mode, candidates, similarity, etc.)
+│   ├── graph.py                       # LangGraph StateGraph (+ comparison_gate node)
+│   ├── loop.py                        # Node functions for both modes
+│   ├── server.py                      # FastAPI + WebSocket + REST (+ commit-preference)
+│   ├── events.py                      # Event emitter
+│   ├── agent_mode.py                  # Old Agent Mode: team composition + per-role bake-off
+│   └── artifacts.py                   # Run artifact handling
 │
-├── sandbox/                           # Track B: execution sandbox
+├── sandbox/                           # Execution sandbox — local or remote
 │   ├── __init__.py
-│   ├── manager.py                     # Container lifecycle
-│   ├── Dockerfile
-│   └── entrypoint.sh
+│   ├── manager.py                     # Local Docker container lifecycle
+│   ├── factory.py                     # Picks docker vs akash backend from env
+│   ├── akash.py                       # HTTP client for pooled Akash sandbox pods
+│   ├── agent_server.py                # In-container HTTP agent (runs on Akash)
+│   └── Dockerfile
 │
-├── dashboard/                         # Track C: frontend
+├── akash/                             # Akash Network deployment (decentralized compute)
+│   ├── deploy-sandbox.yaml            # SDL: sandbox-agent pods
+│   ├── deploy-sandbox-pomerium.yaml   # SDL: sandbox-agent + Pomerium ingress
+│   ├── deploy-proof.yaml              # SDL: nginx proof-of-path test
+│   ├── env.sandbox.sh                 # Akash testnet chain config
+│   └── pomerium/                      # Zero-trust ingress image for the sandbox mesh
+│       ├── config.yaml
+│       ├── Dockerfile
+│       └── README.md
+│
+├── pomerium/                          # Zero-trust proxy in front of the dashboard
+│   ├── config.yaml                    # Route :8000 behind GitHub login
+│   ├── docker-compose.pomerium.yml
+│   ├── gen-certs.sh                   # Local TLS certs for *.localhost.pomerium.io
+│   ├── .env.pomerium.example
+│   └── README.md
+│
+├── dashboard/                         # Frontend (React + Vite)
 │   ├── package.json
 │   ├── vite.config.ts
 │   ├── index.html
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── main.tsx
-│   │   ├── hooks/
-│   │   │   ├── useWebSocket.ts
-│   │   │   └── useRunState.ts
-│   │   ├── components/
-│   │   │   ├── AgentGrid.tsx
-│   │   │   ├── RoutingPanel.tsx
-│   │   │   ├── CostMeter.tsx
-│   │   │   ├── ComparisonChart.tsx
-│   │   │   ├── ScoreTimeline.tsx
-│   │   │   ├── DecisionLog.tsx
-│   │   │   ├── TraceViewer.tsx
-│   │   │   ├── InterveneModal.tsx
-│   │   │   └── RunControls.tsx
-│   │   ├── types/
-│   │   │   └── events.ts
-│   │   └── styles/
-│   │       └── globals.css
-│   └── mock/
-│       └── mock_events.json
+│   └── src/                           # Components, hooks, and types — see dashboard/README.md
 │
 ├── data/                              ← gitignored, created at runtime
-│   ├── costs.db
-│   ├── scheduler.db
-│   └── traces/
+│   ├── costs.db                       # Every LLM call: tokens, cost, latency
+│   ├── scheduler.db                   # Task mode's routing_history (pass rate + critic_score)
+│   ├── similarity.db                  # Agent mode's step-similarity cache
+│   ├── checkpoints.db                 # LangGraph SqliteSaver — resumable run state
+│   └── traces/{run_id}.jsonl          # Full prompt/response per call, one file per run
 │
 ├── demo/
-│   ├── tasks/
-│   │   ├── csv_dedup.md
-│   │   └── flask_api.md
-│   ├── pitch.md
-│   └── backup_video/
+│   └── tasks/
 │
 ├── tests/
-│   ├── test_router.py
-│   ├── test_cost_tracker.py
-│   ├── test_sandbox.py
-│   └── test_loop.py
 │
 └── docs/
-    ├── EVENT_SCHEMA.md
-    ├── GITHUB_WORKFLOW.md
-    └── JUDGE_QA.md
+    └── EVENT_SCHEMA.md                # Backend/frontend event contract
 ```
 
 ---
 
-## System flow: what happens when a user hits Run
+## System flow — Task mode: what happens when a user hits Run
+
+Task mode is `POST /run` with `mode: "task"` (the default). This is the original, unchanged loop — one model per step, picked by the classic router.
 
 ### Step 0: Setup
 ```
@@ -109,15 +109,15 @@ User pastes spec in dashboard → clicks Run
 Dashboard sends POST /run to FastAPI server
 Server creates:
   - run_id (uuid)
-  - Docker container (sandbox for code execution)
+  - Sandbox container (local Docker, or a pooled Akash pod — see sandbox/factory.py)
   - LangGraph state machine with empty SwarmState
   - WebSocket connection to dashboard
 ```
 
-### Step 1: Planner (Sonnet)
+### Step 1: Planner (Sonnet 4.6)
 ```
 Input:  spec text
-Model:  Claude Sonnet 5 (always — planning is high-leverage, only runs once)
+Model:  claude-sonnet-4-6 (always — planning is high-leverage, only runs once)
 Output: list of PlanStep objects, each with:
   - id: "s1"
   - description: "set up argparse with input/output/key flags"
@@ -189,7 +189,7 @@ Event emitted: {agent: "tester", action: "run_tests",
 ### Step 5: Critic judges the output
 ```
 Input:  spec + current code + test results
-Model:  Claude Sonnet 5 (always — judging needs strong reasoning)
+Model:  claude-sonnet-4-6 (always — judging needs strong reasoning)
 
 Output: structured JSON via tool_use:
   {
@@ -229,6 +229,84 @@ IF plan-level fail:
 User clicks plan step in dashboard → types correction
 POST /intervene {run_id, step_id, correction_text}
 Server loads checkpoint → Planner re-plans downstream → loop resumes
+```
+
+---
+
+## System flow — Agent mode: deliberation + empirical comparison
+
+Agent mode is `POST /run` with `mode: "agent"`. Same Planner → Coder → Tester → Critic
+skeleton, but `router_node` takes a completely different path per step, and the graph
+gains one extra pause point.
+
+### Step 2 (agent mode): similarity check → deliberation
+
+```
+1. Similarity check (scheduler/similarity.py)
+   Embed "{step_class}: {step_description}" with text-embedding-3-small.
+   Cosine-compare against every past step's embedding (data/similarity.db).
+
+   score >= SIMILARITY_THRESHOLD (0.60, placeholder — not yet calibrated):
+     → skip deliberation entirely, reuse the historical winning model.
+     → Event: {agent: "router", action: "similarity_skip",
+                similarity_score: 0.91, matched_step_id: "42"}
+     → Execution (Coder → Tester → Critic) still runs in FULL — only the
+       deliberation is skipped, never the actual work.
+
+   score < threshold, OR this is a retry (iteration > 0):
+     → deliberate (retries always re-deliberate — reusing a just-failed
+       winner via similarity would lock the failure in).
+
+2. Deliberation (scheduler/deliberation.py) — three fixed voices:
+     Planner voice   claude-sonnet-4-6   argues from what the step needs
+     Debate voice    claude-opus-4-8     stress-tests against complexity/history
+     Judge           claude-opus-4-6     always makes the final call
+
+   2 rounds minimum (1 planner-voice turn + 1 debate-voice turn each), early
+   stop if both voices' pairs agree, hard cap 3 rounds. The judge then picks
+   the final TWO candidates (not one) from DELIBERATION_MODEL_POOL — a
+   degenerate same-model pick auto-substitutes an adjacent pool model.
+
+   Event per turn: {agent: "debate", action: "deliberation_turn",
+                     model: "claude-opus-4-8", candidates: [...], detail: "..."}
+```
+
+### Step 3 (agent mode): dual-candidate sandbox comparison
+
+```
+Both candidates are ACTUALLY BUILT — concurrently, each in its own isolated
+sandbox: real Coder call → real pytest → real, independent Critic verdict.
+No simulation, no lightweight check — full judging on both.
+
+Per-candidate cost is isolated under a sub-run-id (run_id::step_id::model) so
+overlapping models never pollute each other's cost, and both outcomes feed
+routing history so future deliberations argue from real evidence.
+
+Event per candidate: {agent: "evaluator", action: "candidate_result",
+                       model, critic_score, tests_passed, tests_total,
+                       cost_usd, latency_ms}
+```
+
+### Step 3.5: the pause — awaiting_preference
+
+```
+The graph does NOT pick a winner automatically. It routes through a dedicated
+comparison_gate node — the ONLY node besides "critic" in interrupt_after — and
+stops there. Task mode never visits this node, so it's completely unaffected.
+
+Event: {agent: "evaluator", action: "awaiting_preference", candidates: [...]}
+
+Two ways out of the pause:
+  1. POST /run/{run_id}/commit-preference {"dimension": "cost"|"accuracy"|"latency"}
+     → resolve_comparison() picks the winner along that axis, resumes the run.
+  2. 2-minute timeout watchdog (server.py) — if nobody answers, auto-applies
+     the default rule (highest accuracy, tie broken by lowest cost) and
+     resumes automatically. A run can never hang forever.
+
+A passing candidate always outranks a failing one, regardless of dimension.
+The winner's test_results + Critic verdict flow forward into tester_node/
+critic_node as a pass-through — no third Critic call. The winner's files
+become the run's workspace so later steps build on it, same as Task mode.
 ```
 
 ---
@@ -363,11 +441,18 @@ client.call(model="gpt-mini", messages=[...])
 
 ### Model registry
 
+`scheduler/models.py` is the single source of truth for pricing and pools. Task mode and
+Agent mode deliberately use **separate pools** — they never share a tier list, so tuning
+one can't silently change the other's cost or behavior (this was a real bug once — see
+PR #10, "Separate Agent Mode's model tiers from Daily Task's").
+
 ```python
 MODEL_PRICES = {
     # Anthropic
     "claude-haiku-4-5":  {"provider": "anthropic", "input": 1.00/1M, "output": 5.00/1M,  "tier": 2},
+    "claude-sonnet-4-6": {"provider": "anthropic", "input": 3.00/1M, "output": 15.00/1M, "tier": 3},
     "claude-sonnet-5":   {"provider": "anthropic", "input": 2.00/1M, "output": 10.00/1M, "tier": 3},
+    "claude-opus-4-6":   {"provider": "anthropic", "input": 5.00/1M, "output": 25.00/1M, "tier": 4},
     "claude-opus-4-8":   {"provider": "anthropic", "input": 5.00/1M, "output": 25.00/1M, "tier": 4},
 
     # OpenAI
@@ -376,14 +461,36 @@ MODEL_PRICES = {
     "gpt-5":             {"provider": "openai", "input": 1.25/1M, "output": 10.00/1M, "tier": 2},
     "gpt-5.4":           {"provider": "openai", "input": 2.50/1M, "output": 15.00/1M, "tier": 3},
     "gpt-5.5":           {"provider": "openai", "input": 5.00/1M, "output": 30.00/1M, "tier": 4},
+
+    # Embeddings (Agent mode's similarity-skip cache) — no output tokens
+    "text-embedding-3-small": {"provider": "openai", "input": 0.02/1M, "output": 0.0, "tier": 0},
 }
 
+# Task mode's classic (non-debate) router.
 DIFFICULTY_TO_MODEL = {
     "EASY":   "gpt-4.1-mini",       # $0.40/$1.60
     "MEDIUM": "claude-haiku-4-5",    # $1.00/$5.00
     "HARD":   "claude-sonnet-5",     # $2.00/$10.00
 }
+
+# Task mode's escalation ladder, cheapest -> most expensive.
+TIER_LADDER = ["gpt-4.1-mini", "claude-haiku-4-5", "claude-sonnet-5", "gpt-5.5"]
+
+# Old Agent Mode's bake-off pool (orchestrator/agent_mode.py, scheduler/team.py) —
+# a full sandbox per candidate, so it stays to two genuinely strong models.
+AGENT_MODE_TIER_LADDER = ["claude-sonnet-4-6", "claude-opus-4-6"]
+
+# Agent mode's deliberation pool (scheduler/deliberation.py) — the 5 execution
+# candidates the Planner voice + Debate voice + Judge choose between.
+DELIBERATION_MODEL_POOL = [
+    "gpt-4.1-mini", "gpt-5", "claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-8",
+]
 ```
+
+Fixed roles, same across both modes: Planner, Critic, and Team Planner always run on
+`claude-sonnet-4-6`; the deliberation's Debate voice always runs on `claude-opus-4-8`;
+the deliberation's Judge and the debate router (`scheduler/debate.py`) always run on
+`claude-opus-4-6`.
 
 ---
 
@@ -415,13 +522,14 @@ TrackedLLMClient.call() completes
 
 ## Event schema (contract between backend and frontend)
 
-Freeze this on Day 1. All three tracks code against it.
+Frozen at `docs/EVENT_SCHEMA.md` — the actual source of truth, kept manually in sync with
+the TypeScript types in `dashboard/src/types.ts`. Current shape:
 
 ```typescript
 interface SwarmEvent {
   timestamp: string;
   run_id: string;
-  agent: "planner" | "coder" | "critic" | "tester" | "router";
+  agent: "planner" | "coder" | "critic" | "tester" | "router" | "debate" | "evaluator" | "team_planner";
   action: string;
   step_id: string;
   step_class: string;
@@ -438,17 +546,31 @@ interface SwarmEvent {
   critic_score: number | null;
   tests_passed: number | null;
   tests_total: number | null;
+  candidates: string[] | null;      // Agent mode: the candidate model pair in play
+  similarity_score: number | null;  // Agent mode: cosine score on similarity_skip events
+  matched_step_id: string | null;   // Agent mode: history row id the step matched
   detail: string;
 }
 ```
+
+`agent: "debate"` carries deliberation turns (`deliberation_turn`) — the planner voice /
+debate voice / judge exchange. `agent: "evaluator"` carries Agent mode's comparison
+results (`candidate_result`, `awaiting_preference`, `winner_selected`).
 
 ---
 
 ## Dashboard layout
 
+This is the **original Day-1 wireframe** — useful for understanding the intent (agent
+grid, routing panel, cost meter, score timeline, decision log), but the actual
+implementation has since evolved under a different component structure
+(`CostDashboard`, `EventFeed`, `ModelCards`, `RunSelector`, `RunStatusBanner`,
+`RoutingDecisionsList`, etc. — see `dashboard/src/components/`). Treat this diagram as
+the concept, not the current file names.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  SWARM CONTROL                              [Run] [Baseline]    │
+│  YIELD                                      [Run] [Baseline]    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─── Agent grid ───────────────────────────────────────────┐   │
@@ -495,28 +617,111 @@ interface SwarmEvent {
 
 ---
 
+## Sandbox execution: local Docker or Akash Network
+
+`sandbox/factory.py` picks the backend from `SANDBOX_BACKEND` at startup — the
+orchestrator calls the same interface (`create`, `inject_files`, `run_tests`, `cleanup`)
+either way and never knows which one it's talking to.
+
+```
+SANDBOX_BACKEND=docker (default)          SANDBOX_BACKEND=akash
+  sandbox/manager.py                        sandbox/akash.py
+  local `docker run` containers             HTTP calls to pooled pods on
+                                             Akash Network (decentralized
+                                             compute marketplace)
+                                                 │
+                                                 ▼
+                                        sandbox/agent_server.py runs INSIDE
+                                        each pod — stdlib-only HTTP server
+                                        exposing GET /health, POST /inject,
+                                        POST /run_tests, POST /reset (no
+                                        Docker socket available on Akash, so
+                                        these replace exec_run/put_archive)
+```
+
+Every mutating endpoint on the Akash agent requires a bearer token
+(`SANDBOX_AGENT_TOKEN`) since the pod is reachable from the public internet.
+`akash/deploy-sandbox.yaml` is the SDL that deploys the pool; `akash/env.sandbox.sh`
+holds the testnet chain config for `provider-services`.
+
+---
+
+## Zero-trust access: Pomerium
+
+Two independent Pomerium deployments, fronting two different surfaces:
+
+**1. The dashboard (`pomerium/`)** — an identity-aware reverse proxy in front of
+`orchestrator/server.py` (`:8000`). Forces a GitHub login before any browser reaches the
+app; `server.py` itself is completely unchanged, since anything that reaches it is
+already authenticated.
+
+```
+browser ──https──▶ Pomerium ──▶ GitHub login ──▶ policy check ──▶ uvicorn :8000
+```
+
+Runs locally against `*.localhost.pomerium.io` (resolves to 127.0.0.1 — no DNS or
+`/etc/hosts` changes needed) via `pomerium/docker-compose.pomerium.yml`. The dashboard's
+`/ws/events` WebSocket works behind the proxy because the route sets
+`allow_websocket_upgrade: true`.
+
+**2. The Akash sandbox mesh (`akash/pomerium/`)** — the *only* public entry point to the
+remote sandbox pods; the `agent` service itself moves to the internal Akash mesh
+(no longer directly exposed).
+
+```
+internet ──https──▶ Akash edge (TLS) ──http──▶ Pomerium ──http──▶ agent:8080
+                                                   │ authenticates the orchestrator
+                                                   ▼ (fail-closed until auth wired)
+```
+
+**Currently fail-closed by design** — the route's policy is `[]` (deny-all) until the
+orchestrator's own service identity (JWT or mTLS) is wired in to replace the plain
+shared-bearer-token scheme `sandbox/agent_server.py` uses today. See
+`akash/pomerium/README.md` for the two remaining steps.
+
+---
+
 ## Dependency graph (who imports whom)
 
 ```
 scheduler/models.py          ← imported by everything, imports nothing
     │
     ├── scheduler/router.py              (imports models + openai for nano)
+    │       │
+    │       ├── scheduler/debate.py      (imports router for _stats + models)
+    │       └── scheduler/similarity.py  (imports models for embed model id)
+    │               │
+    │               └── scheduler/deliberation.py  (imports router + models)
+    │                       │
+    │                       └── scheduler/team.py   (imports debate + models — old Agent Mode)
+    │
     ├── scheduler/cost_tracker.py        (imports models)
     ├── scheduler/latency_tracker.py     (imports models)
     ├── scheduler/trace_logger.py        (imports models)
     ├── scheduler/budget_guard.py        (imports cost_tracker)
     │
-    └── scheduler/tracked_client.py      (imports all above + anthropic + openai)
+    └── scheduler/tracked_client.py      (imports all above + anthropic + openai; embed() too)
                 │
-                ├── agents/planner.py    (imports tracked_client only)
-                ├── agents/coder.py      (imports tracked_client only)
-                └── agents/critic.py     (imports tracked_client only)
+                ├── agents/planner.py       (imports tracked_client only)
+                ├── agents/coder.py         (imports tracked_client only)
+                ├── agents/critic.py        (imports tracked_client only)
+                └── agents/team_planner.py  (imports tracked_client only)
                         │
-                        └── orchestrator/loop.py    (imports agents + router)
+                        └── orchestrator/loop.py    (imports agents + router + debate +
+                                │                     deliberation + similarity)
+                                ├── orchestrator/graph.py    (imports loop + state)
+                                │       │
+                                │       └── orchestrator/server.py  (mounts everything)
                                 │
-                                └── orchestrator/graph.py   (imports loop + state)
-                                        │
-                                        └── orchestrator/server.py  (mounts everything)
+                                └── orchestrator/agent_mode.py  (old Agent Mode — reuses
+                                                                  _get_client/_get_sandbox
+                                                                  from loop.py, but its own
+                                                                  fan-out orchestration,
+                                                                  not the LangGraph loop)
+
+sandbox/manager.py  ─┐
+sandbox/akash.py    ─┴─→ sandbox/factory.py  (picks backend from SANDBOX_BACKEND env)
+                              → consumed by orchestrator/loop.py's _get_sandbox()
 ```
 
 Key rules:
@@ -524,7 +729,10 @@ Key rules:
 - Agents never import cost_tracker, router, or scheduler directly.
 - Agents receive TrackedLLMClient as a dependency — instrumentation is automatic.
 - The orchestrator is the only module that wires everything together.
-- The dashboard is completely decoupled — it only consumes WebSocket events.
+- The dashboard is completely decoupled — it only consumes WebSocket events + REST.
+- Task mode and Agent mode (deliberation) share every agent, the sandbox factory, and
+  the recording layer — they diverge only in `router_node`'s branch and which model
+  pool/constants they read from `scheduler/models.py`.
 
 ---
 
@@ -540,17 +748,30 @@ API_PORT=8000
 DASHBOARD_PORT=5173
 SANDBOX_IMAGE=swarm-sandbox:latest
 SANDBOX_TIMEOUT=120
+
+# Sandbox backend: "docker" (local, default) or "akash" (pooled Akash pods).
+SANDBOX_BACKEND=docker
+# When SANDBOX_BACKEND=akash: comma-separated public sandbox URIs from Akash
+# Console (or the Pomerium URI once fronted). Bearer token the pods deploy with.
+SANDBOX_AKASH_URLS=
+SANDBOX_AGENT_TOKEN=
 ```
+
+See `pomerium/.env.pomerium.example` for the dashboard proxy's separate secrets
+(`POMERIUM_SHARED_SECRET`, `POMERIUM_COOKIE_SECRET`, GitHub OAuth client id/secret).
 
 ### requirements.txt
 ```
 anthropic>=0.30.0
 openai>=1.30.0
 langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=2.0.0
 langchain-core>=0.3.0
 fastapi>=0.115.0
 uvicorn>=0.30.0
 websockets>=12.0
 docker>=7.0.0
 pydantic>=2.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
 ```

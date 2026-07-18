@@ -1,6 +1,6 @@
-# Swarm Control
+# Yield
 
-A self-directing agent swarm (Planner, Coder, Critic) that builds software from a spec, gated by a Critic rubric, with a **hybrid LLM + history router** that classifies each step's difficulty and routes it to the cheapest model tier that can handle it.
+A self-directing agent swarm (Planner, Coder, Tester, Critic) that builds software from a spec — with two ways to run it: a fast **Task mode** that routes each step to the cheapest model tier that can handle it, and a deliberative **Agent mode** where two Claude voices debate the model choice, then empirically bake off two candidates in parallel sandboxes before picking a winner.
 
 **Event:** Loop Engineering Hackathon · AWS Builder Loft, SF · July 17, 2026
 **Theme:** Self-directing agent loops — plan, act, observe, self-correct
@@ -14,8 +14,9 @@ See [PLAN.md](PLAN.md) for build schedule, team split, and demo script.
 
 ```bash
 # Clone and setup
-git clone git@github.com:ayushitomar03/swarm-control.git
-cd swarm-control
+git clone https://github.com/KamayaniR/SWARM_MULTIAGENT.git
+cd SWARM_MULTIAGENT
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cd dashboard && npm install && cd ..
 
@@ -23,7 +24,7 @@ cd dashboard && npm install && cd ..
 cp .env.example .env
 # Edit .env with your ANTHROPIC_API_KEY, OPENAI_API_KEY
 
-# Build sandbox
+# Build the local sandbox (or set SANDBOX_BACKEND=akash to use remote pods instead)
 docker build -t swarm-sandbox sandbox/
 
 # Run
@@ -31,65 +32,97 @@ uvicorn orchestrator.server:app --port 8000 --reload &
 cd dashboard && npm run dev
 ```
 
+Optional: put [Pomerium](pomerium/README.md) in front of the dashboard for zero-trust login before you demo it to anyone else.
+
 ---
 
-## What it does (one paragraph)
+## What it does
 
-You give it a task spec ("build a CSV deduplication CLI"). A Planner breaks the spec into typed steps. A hybrid router (GPT-4.1 nano LLM classification + historical pass/fail data) picks the cheapest model for each step. A Coder implements each step in a Docker sandbox. Tests run automatically. A Critic scores the output against a rubric. If it fails, the router may escalate to a stronger model and the Coder retries with the Critic's feedback. A live dashboard shows every decision, every cost, and every routing choice in real time.
+**Task mode** (default): you give it a spec ("build a CSV deduplication CLI"). A Planner breaks it into typed steps. A hybrid router (GPT-4.1 nano classification + historical pass/fail data) picks one model per step from a cheap-to-expensive ladder spanning OpenAI and Anthropic. A Coder implements the step in a sandbox, tests run automatically, a Critic scores the result against a rubric, and a failing step retries — possibly on a stronger model — until it passes or escalates to a human.
+
+**Agent mode**: same loop, but the routing decision is a genuine deliberation. A Planner voice and a Debate voice (both Claude) argue over which of five candidate models suits the step, grounded in real historical pass rates; a judge picks two finalists. Both candidates are then actually built — concurrently, in isolated sandboxes, each fully tested and Critic-judged — and the run **pauses** waiting for you to pick a winner by cost, latency, or accuracy (or it auto-applies the best-accuracy rule after a timeout, so a run never hangs forever). A similarity cache remembers past steps by embedding, so near-duplicate steps skip the deliberation and reuse the model that already won — execution still always runs in full.
+
+A live dashboard shows every routing decision, every dollar spent, and — in Agent mode — the full debate transcript and the side-by-side candidate comparison, in real time.
 
 ---
 
 ## Why this matters
 
-Every company running AI agents today sends every task to their most expensive model. That's like hiring a senior engineer at $300/hour to rename variables. We built the system that automatically matches task difficulty to model capability, saving 40-70% on agent costs while maintaining the same output quality.
+Every company running AI agents today sends every task to their most expensive model. That's like hiring a senior engineer at $300/hour to rename variables. We built a system that matches task difficulty to model capability automatically — and where it's genuinely unsure, it doesn't guess: it runs the experiment and measures the answer.
 
 ---
 
 ## Core architecture
 
 ```
-User → Dashboard → POST /run → FastAPI server
-                                    │
-                                    ▼
-                              LangGraph loop
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-                Planner         Router          Coder
-               (Sonnet)     (nano + history)   (routed model)
-                    │               │               │
-                    └───────► Sandbox tests ◄───────┘
-                                    │
-                                    ▼
-                              Critic (Sonnet)
-                                    │
-                         ┌──────────┼──────────┐
-                         ▼          ▼          ▼
-                       Pass    Step fail    Plan fail
-                       Done    → retry     → re-plan
+User → Dashboard → POST /run {mode: "task" | "agent"} → FastAPI server
+                                        │
+                                        ▼
+                                  LangGraph loop
+                                        │
+                        ┌───────────────┼────────────────────┐
+                        ▼               ▼                    ▼
+                    Planner          Router               Coder
+                  (Sonnet 4.6)   task: nano + history    (routed model)
+                                 agent: similarity cache
+                                 → deliberation → 2 candidates
+                        │               │                    │
+                        └────────► Sandbox tests ◄───────────┘
+                                  (local Docker or Akash pods)
+                                        │
+                                        ▼
+                                Critic (Sonnet 4.6)
+                                        │
+                             ┌──────────┼──────────┐
+                             ▼          ▼          ▼
+                           Pass    Step fail    Plan fail
+                           Done    → retry     → re-plan
+
+  Agent mode only: after both candidates are built + judged, the run pauses
+  (awaiting_preference) until you pick cost / latency / accuracy — or a
+  2-minute timeout auto-applies the default rule.
 ```
 
 ---
 
-## The router (hybrid LLM + history)
+## The routers
 
-**Primary:** GPT-4.1 nano classifies each step as EASY/MEDIUM/HARD ($0.000022 per call, 200-500ms). Always works, never corrupts.
+**Task mode — hybrid LLM + history.** GPT-4.1 nano classifies each step as EASY/MEDIUM/HARD ($0.000022/call). If historical pass/fail data shows a cheaper model reliably handles this step's class, the router overrides downward. Reset the history anytime — the LLM classifier keeps working independently.
 
-**Enhancement:** Historical pass/fail data per step class. If history shows a cheaper model works for this task type, override the LLM classification downward. If history is corrupted, reset it — the LLM router keeps working independently.
+**Agent mode — deliberation + empirical comparison.** A Planner voice (Sonnet 4.6) and a Debate voice (Opus 4.8) argue over the model pool for 2–3 rounds; a judge (Opus 4.6) always makes the final call, naming two distinct candidates. Both get built in parallel, fully tested and Critic-scored, and the run waits for a preference before picking a winner. A `text-embedding-3-small` similarity cache skips the deliberation entirely for steps that closely match one already solved.
 
-**Production path:** Swap GPT-4.1 nano for a self-hosted DistilBERT (50ms, $0.00 per call). Same interface, zero changes to the rest of the system.
+Task mode and Agent mode use **separate model pools on purpose** — they never share a tier list, so tuning one can't silently change the other's cost or behavior.
 
 ---
 
-## Model tiers
+## Model registry
 
-| Tier | Model | Input $/1M | Output $/1M | Used for |
-|------|-------|-----------|------------|----------|
-| 1 | GPT-4.1 mini | $0.40 | $1.60 | Easy tasks: CLI wiring, test scaffolding |
-| 2 | Claude Haiku 4.5 | $1.00 | $5.00 | Medium tasks: file parsing, I/O |
-| 3 | Claude Sonnet 5 | $2.00 | $10.00 | Hard tasks: algorithms, complex logic |
-| 4 | GPT-5.5 | $5.00 | $30.00 | Hardest tasks: fallback for everything |
-| Router | GPT-4.1 nano | $0.10 | $0.40 | Routing classification only |
+| Pool | Models | Used by |
+|------|--------|---------|
+| Task mode ladder | `gpt-4.1-mini` → `claude-haiku-4-5` → `claude-sonnet-5` → `gpt-5.5` | Classic router, baseline mode |
+| Agent mode deliberation pool | `gpt-4.1-mini`, `gpt-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-8` | Deliberation's two execution candidates |
+| Fixed roles | `claude-sonnet-4-6` (Planner, Critic, Team Planner, deliberation's Planner voice) · `claude-opus-4-8` (Debate voice) · `claude-opus-4-6` (deliberation judge, debate router) | Every mode |
+| Routing-only | `gpt-4.1-nano` (difficulty classifier) · `text-embedding-3-small` (similarity cache) | Both modes |
+
+---
+
+## Sandbox execution — local or decentralized
+
+Code runs in a sandboxed container either way — `SANDBOX_BACKEND=docker` (default, local) or `SANDBOX_BACKEND=akash` (pooled containers on [Akash Network](https://akash.network), a decentralized compute marketplace). Same interface either way (`sandbox/factory.py` picks the backend from env); the orchestrator doesn't know or care which one it's talking to.
+
+---
+
+## Zero-trust access — Pomerium
+
+[Pomerium](https://www.pomerium.com) sits in front of two different surfaces:
+- **The dashboard** ([pomerium/](pomerium/README.md)) — forces a GitHub login before any browser reaches the FastAPI server; the app code itself is unchanged.
+- **The Akash sandbox mesh** ([akash/pomerium/](akash/pomerium/README.md)) — the only public entry point to the remote sandbox pods, currently fail-closed (deny-all) pending the orchestrator's own service-identity auth.
+
+---
+
+## Human in the loop
+
+`POST /intervene` rolls back to a checkpoint and lets you correct the plan mid-run. In Agent mode, `POST /run/{run_id}/commit-preference` lets you pick the winning candidate by hand instead of the default rule — both use LangGraph's checkpointing to pause and resume a live run without losing state.
 
 ---
 
